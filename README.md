@@ -28,7 +28,13 @@ export DOCSYNC_API_TOKEN=<your-token>
 docz login --token <your-token>
 ```
 
-Token 获取：登录 https://docz.zhenguanyu.com → 进入任意 Space → 页面内创建 API Token。
+Token 获取方式：
+
+1. 登录 https://docz.zhenguanyu.com（SSO 自动登录）
+2. 点击左下角用户邮箱旁的 **`···`** 按钮，或直接访问 https://docz.zhenguanyu.com/settings
+3. 在 **Settings → Account** 页面找到 **API Tokens** 区域
+4. 点击 **New Token**，输入名称（如 `my-cli`），确认创建
+5. 复制生成的 token（只会显示一次）
 
 ## 使用
 
