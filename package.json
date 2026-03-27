@@ -11,6 +11,20 @@
   "exports": {
     ".": "./dist/index.js"
   },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kanyun-inc/docz-cli"
+  },
+  "license": "MIT",
+  "keywords": [
+    "docsync",
+    "cli",
+    "file-sync",
+    "document"
+  ],
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
