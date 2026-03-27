@@ -146,6 +146,16 @@ Add to your MCP settings:
 | `docsync_delete` | Delete file/folder |
 | `docsync_file_history` | View change history |
 
+## AI Agent Skill
+
+Install as a [reskill](https://github.com/kanyun-inc/reskill) skill to teach AI agents how to use docz-cli:
+
+```bash
+npx reskill install github:kanyun-inc/docz-cli/skills -a claude-code cursor -y
+```
+
+The skill provides command reference, usage scenarios, and addressing format documentation so agents can autonomously browse, read, and write DocSync documents.
+
 ## API Reference
 
 docz-cli wraps the DocSync REST API:

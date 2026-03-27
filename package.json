@@ -1,6 +1,6 @@
 {
   "name": "docz-cli",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "DocSync CLI — read and write company documents",
   "type": "module",
   "main": "./dist/index.js",
