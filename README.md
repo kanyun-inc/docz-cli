@@ -40,9 +40,11 @@ npx docz-cli write 吴鹏飞:notes/todo.md '# TODO List'
 **Requirements:** Node.js >= 22.0.0
 
 ```bash
-npm install -g docz-cli      # Global install
-npx docz-cli <command>       # Or use npx directly
+npx docz-cli <command>       # Use directly via npx
+npm install -g docz-cli      # Or global install, then use `docz` shorthand
 ```
+
+> Global install registers both `docz-cli` and `docz` commands. Examples below use `docz-cli`; replace with `docz` if installed globally.
 
 ## Authentication
 
@@ -56,7 +58,7 @@ Then configure:
 
 ```bash
 # Option 1: login command (saved to ~/.docz/config.json)
-docz login --token <your-token>
+docz-cli login --token <your-token>
 
 # Option 2: environment variable
 export DOCSYNC_API_TOKEN=<your-token>
@@ -85,29 +87,29 @@ export DOCSYNC_API_TOKEN=<your-token>
 ### Browse
 
 ```bash
-docz spaces                    # List all spaces
-docz ls 研发                    # List root directory
-docz ls 研发:docs               # List subdirectory
-docz cat 研发:docs/guide.md     # Read file content
+docz-cli spaces                    # List all spaces
+docz-cli ls 研发                    # List root directory
+docz-cli ls 研发:docs               # List subdirectory
+docz-cli cat 研发:docs/guide.md     # Read file content
 ```
 
 ### Write
 
 ```bash
-docz write 吴鹏飞:notes/todo.md '# TODO List'                    # Write content
-echo '# Report' | docz write 吴鹏飞:reports/daily.md -            # From stdin
-docz upload ./report.pdf 研发:reports                              # Upload file
-docz mkdir 研发:new-project                                        # Create folder
+docz-cli write 吴鹏飞:notes/todo.md '# TODO List'                    # Write content
+echo '# Report' | docz-cli write 吴鹏飞:reports/daily.md -            # From stdin
+docz-cli upload ./report.pdf 研发:reports                              # Upload file
+docz-cli mkdir 研发:new-project                                        # Create folder
 ```
 
 ### Manage
 
 ```bash
-docz mv 研发:old.md new.md         # Rename
-docz rm 研发:deprecated.md          # Delete (recoverable)
-docz log 研发                        # Space history
-docz log 研发:docs/guide.md         # File history
-docz trash 研发                      # View trash
+docz-cli mv 研发:old.md new.md         # Rename
+docz-cli rm 研发:deprecated.md          # Delete (recoverable)
+docz-cli log 研发                        # Space history
+docz-cli log 研发:docs/guide.md         # File history
+docz-cli trash 研发                      # View trash
 ```
 
 ## MCP Server
