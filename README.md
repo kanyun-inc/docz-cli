@@ -112,6 +112,25 @@ docz-cli log 研发:docs/guide.md         # File history
 docz-cli trash 研发                      # View trash
 ```
 
+### Pipes
+
+`cat` outputs to stdout, `write ... -` reads from stdin. Combine with any Unix tool:
+
+```bash
+# Search content
+docz-cli cat 研发:docs/guide.md | grep "部署"
+
+# Extract CSV columns
+docz-cli cat 研发:data.csv | cut -d',' -f1,3 | head -10
+
+# Read → transform → write back
+docz-cli cat 吴鹏飞:config.md | sed 's/old/new/g' | docz-cli write 吴鹏飞:config.md -
+
+# Local command output → DocSync
+echo "# Generated at $(date)" | docz-cli write 吴鹏飞:notes/auto.md -
+cat local-file.md | docz-cli write 吴鹏飞:docs/remote.md -
+```
+
 ## MCP Server
 
 Built-in MCP server for AI agent integration (Claude Code, Cursor, etc.).

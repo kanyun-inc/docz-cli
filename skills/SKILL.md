@@ -54,6 +54,25 @@ docz-cli log <space>[:<path>]          # 查看变更历史
 docz-cli trash <space>                 # 查看回收站
 ```
 
+## 管道操作
+
+`cat` 输出到 stdout，`write ... -` 从 stdin 读取，可与任意 Unix 工具组合：
+
+```bash
+# 搜索内容
+docz-cli cat 研发:docs/guide.md | grep "部署"
+
+# CSV 列提取
+docz-cli cat 研发:data.csv | cut -d',' -f1,3 | head -10
+
+# 读取 → 替换 → 写回
+docz-cli cat 吴鹏飞:config.md | sed 's/old/new/g' | docz-cli write 吴鹏飞:config.md -
+
+# 本地命令输出 → 写到 DocSync
+echo "# Generated" | docz-cli write 吴鹏飞:notes/auto.md -
+cat local-file.md | docz-cli write 吴鹏飞:docs/remote.md -
+```
+
 ## 使用场景
 
 ### 场景 1：用户想查看某个 Space 的文档
