@@ -142,7 +142,7 @@ Add to your MCP settings:
 ```json
 {
   "mcpServers": {
-    "docsync": {
+    "docz-mcp": {
       "command": "npx",
       "args": ["-y", "docz-cli", "mcp"],
       "env": {
@@ -157,13 +157,13 @@ Add to your MCP settings:
 
 | Tool | Description |
 |------|-------------|
-| `docsync_list_spaces` | List all accessible spaces |
-| `docsync_list_files` | List files in a directory |
-| `docsync_read_file` | Read file content |
-| `docsync_upload_file` | Upload/create a file |
-| `docsync_mkdir` | Create a folder |
-| `docsync_delete` | Delete file/folder |
-| `docsync_file_history` | View change history |
+| `docz_list_spaces` | List all accessible spaces |
+| `docz_list_files` | List files in a directory |
+| `docz_read_file` | Read file content |
+| `docz_upload_file` | Upload/create a file |
+| `docz_mkdir` | Create a folder |
+| `docz_delete` | Delete file/folder |
+| `docz_file_history` | View change history |
 
 ## AI Agent Skill
 

@@ -60,19 +60,19 @@ function fail(err: unknown) {
 
 export async function startMcpServer(): Promise<void> {
   const server = new Server(
-    { name: 'docsync', version: '0.1.0' },
+    { name: 'docz-mcp', version: '0.5.0' },
     { capabilities: { tools: {} } }
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
       {
-        name: 'docsync_list_spaces',
+        name: 'docz_list_spaces',
         description: '列出所有可访问的 DocSync Space（个人空间和团队空间）',
         inputSchema: { type: 'object' as const, properties: {} },
       },
       {
-        name: 'docsync_list_files',
+        name: 'docz_list_files',
         description: '列出 DocSync Space 中指定目录的文件和文件夹',
         inputSchema: {
           type: 'object' as const,
@@ -91,7 +91,7 @@ export async function startMcpServer(): Promise<void> {
         },
       },
       {
-        name: 'docsync_read_file',
+        name: 'docz_read_file',
         description: '读取 DocSync 文件内容（Markdown、CSV、HTML 等文本文件）',
         inputSchema: {
           type: 'object' as const,
@@ -106,7 +106,7 @@ export async function startMcpServer(): Promise<void> {
         },
       },
       {
-        name: 'docsync_upload_file',
+        name: 'docz_upload_file',
         description: '上传/创建文件到 DocSync Space',
         inputSchema: {
           type: 'object' as const,
@@ -129,7 +129,7 @@ export async function startMcpServer(): Promise<void> {
         },
       },
       {
-        name: 'docsync_mkdir',
+        name: 'docz_mkdir',
         description: '在 DocSync Space 中创建文件夹',
         inputSchema: {
           type: 'object' as const,
@@ -147,7 +147,7 @@ export async function startMcpServer(): Promise<void> {
         },
       },
       {
-        name: 'docsync_delete',
+        name: 'docz_delete',
         description: '删除文件或文件夹（进入回收站，30 天内可恢复）',
         inputSchema: {
           type: 'object' as const,
@@ -162,7 +162,7 @@ export async function startMcpServer(): Promise<void> {
         },
       },
       {
-        name: 'docsync_file_history',
+        name: 'docz_file_history',
         description: '查看文件的变更历史（基于 Git 版本控制）',
         inputSchema: {
           type: 'object' as const,
@@ -186,7 +186,7 @@ export async function startMcpServer(): Promise<void> {
       const client = getClient();
 
       switch (request.params.name) {
-        case 'docsync_list_spaces': {
+        case 'docz_list_spaces': {
           const spaces = await client.listSpaces();
           const lines = spaces.map(
             (s) =>
@@ -195,7 +195,7 @@ export async function startMcpServer(): Promise<void> {
           return ok(lines.join('\n'));
         }
 
-        case 'docsync_list_files': {
+        case 'docz_list_files': {
           const sid = await resolveSpaceId(client, String(args.space));
           const entries = await client.ls(sid, String(args.path ?? ''));
           if (entries.length === 0) return ok('（空目录）');
@@ -207,13 +207,13 @@ export async function startMcpServer(): Promise<void> {
           return ok(lines.join('\n'));
         }
 
-        case 'docsync_read_file': {
+        case 'docz_read_file': {
           const sid = await resolveSpaceId(client, String(args.space));
           const content = await client.cat(sid, String(args.path));
           return ok(content);
         }
 
-        case 'docsync_upload_file': {
+        case 'docz_upload_file': {
           const sid = await resolveSpaceId(client, String(args.space));
           const result = await client.upload(
             sid,
@@ -224,19 +224,19 @@ export async function startMcpServer(): Promise<void> {
           return ok(`已上传: ${result.path}`);
         }
 
-        case 'docsync_mkdir': {
+        case 'docz_mkdir': {
           const sid = await resolveSpaceId(client, String(args.space));
           await client.mkdir(sid, String(args.path));
           return ok(`已创建: ${args.path}`);
         }
 
-        case 'docsync_delete': {
+        case 'docz_delete': {
           const sid = await resolveSpaceId(client, String(args.space));
           await client.rm(sid, String(args.path));
           return ok(`已删除: ${args.path}（30 天内可从回收站恢复）`);
         }
 
-        case 'docsync_file_history': {
+        case 'docz_file_history': {
           const sid = await resolveSpaceId(client, String(args.space));
           const logs = await client.log(
             sid,
