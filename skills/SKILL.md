@@ -1,7 +1,7 @@
 ---
 name: docsync
-description: 读写公司 DocSync 文档。触发："查看文档"、"上传文档"、"读取 Space"、"docz"、"DocSync"
-version: 0.3.1
+description: Read and write company DocSync documents. Triggers on "docs", "documents", "upload file", "read space", "docz", "DocSync"
+version: 0.4.0
 author: kris
 tags:
   - docsync
@@ -9,102 +9,95 @@ tags:
   - file-sync
   - knowledge
 user-invocable: true
-argument-hint: "<command> <space>:<path>"
-allowed-tools: Bash(npx docz-cli:*), Bash(docz-cli:*), Bash(export DOCSYNC_API_TOKEN:*)
+argument-hint: "spaces | ls <space> | cat <space>:<path>"
+allowed-tools: Bash(*)
 ---
 
-# DocSync — 读写公司文档
+# DocSync — Read & Write Company Documents
 
-通过 `docz-cli` 命令行工具读写 DocSync（docz.zhenguanyu.com）平台上的文档。
+CLI tool `docz-cli` for reading and writing files in DocSync (docz.zhenguanyu.com). Outputs to stdout, reads from stdin — designed to compose with Unix pipes.
 
-## 认证检查
+## Auth Check
 
-首次使用前检查环境变量：
+Before first use:
 
 ```bash
 echo $DOCSYNC_API_TOKEN
 ```
 
-- **有值**：直接使用
-- **空**：引导用户去 https://docz.zhenguanyu.com/settings → Account → API Tokens → New Token 创建 token，然后让用户把 token 配置到 Rush 的用户环境变量设置中
+- **Non-empty**: proceed
+- **Empty**: tell the user to create a token at https://docz.zhenguanyu.com/settings → Account → API Tokens → New Token, then configure it in Rush user environment variable settings
 
-## 命令速查
+## Addressing
+
+All commands use `<space>:<path>`. The `<space>` segment accepts a space name or UUID. When ambiguous, use `npx docz-cli spaces` to verify, then use UUID.
+
+```
+研发                    → root of space "研发"
+研发:docs               → subdirectory
+研发:docs/guide.md      → specific file
+```
+
+## Commands
 
 ```bash
-# 浏览
-npx docz-cli spaces                        # 列出所有 Space
-npx docz-cli ls <space>[:<path>]           # 列出目录内容
-npx docz-cli cat <space>:<path>            # 读取文件内容
-
-# 写入
-npx docz-cli write <space>:<path> '<content>'   # 写内容到文件
-npx docz-cli write <space>:<path> -             # 从 stdin 写入
+npx docz-cli spaces                           # list all spaces
+npx docz-cli ls <space>[:<path>]              # list directory
+npx docz-cli cat <space>:<path>               # read file to stdout
+npx docz-cli write <space>:<path> '<text>'    # write content to file
+npx docz-cli write <space>:<path> -           # write from stdin
 npx docz-cli upload <local-file> <space>[:<dir>]
 npx docz-cli mkdir <space>:<path>
-
-# 管理
 npx docz-cli mv <space>:<from> <to>
 npx docz-cli rm <space>:<path>
-npx docz-cli log <space>[:<path>]
+npx docz-cli log <space>[:<path>]             # Git commit history
 npx docz-cli trash <space>
 ```
 
-## 寻址格式
+## Unix Pipes
 
-`<space>:<path>` — Space 支持名称（`研发`）或 ID（`c4d903fe-...`）
+`cat` writes to stdout. `write ... -` reads from stdin. Combine freely with standard Unix tools.
 
-- `研发` — 根目录
-- `研发:docs` — 子目录
-- `研发:docs/guide.md` — 具体文件
-
-## 管道操作
-
-`cat` 输出到 stdout，`write ... -` 从 stdin 读取：
-
+**Search content:**
 ```bash
-npx docz-cli cat 研发:docs/guide.md | grep "部署"
-npx docz-cli cat 研发:data.csv | cut -d',' -f1,3 | head -10
-npx docz-cli cat 吴鹏飞:config.md | sed 's/old/new/g' | npx docz-cli write 吴鹏飞:config.md -
+npx docz-cli cat 研发:docs/guide.md | grep -i "deploy"
+npx docz-cli cat 研发:docs/guide.md | grep -n "TODO"
 ```
 
-## 使用场景
-
-### 查看文档
-
+**Extract and transform:**
 ```bash
-npx docz-cli spaces
-npx docz-cli ls 研发
-npx docz-cli cat 研发:docs/guide.md
+npx docz-cli cat 研发:data.csv | cut -d',' -f1,3 | head -20
+npx docz-cli cat 研发:data.csv | awk -F',' '$3 > 1000 {print $1, $3}'
+npx docz-cli cat 研发:report.md | wc -l
 ```
 
-### 上传/保存内容
-
+**Read → process → write back:**
 ```bash
-npx docz-cli write 吴鹏飞:reports/summary.md '# 周报摘要
-- 完成了 XXX
-- 修复了 YYY'
-
-npx docz-cli upload ./analysis.csv 吴鹏飞:data
+npx docz-cli cat 吴鹏飞:config.md | sed 's/old-value/new-value/g' | npx docz-cli write 吴鹏飞:config.md -
 ```
 
-### 查看历史
-
+**Generate and upload:**
 ```bash
-npx docz-cli log 研发
-npx docz-cli log 研发:docs/guide.md
+echo "# Auto-generated at $(date)" | npx docz-cli write 吴鹏飞:notes/auto.md -
+cat local-file.md | npx docz-cli write 吴鹏飞:docs/remote.md -
 ```
 
-### 整理文档
-
+**Combine multiple files:**
 ```bash
-npx docz-cli mkdir 吴鹏飞:archive/2026-Q1
-npx docz-cli mv 吴鹏飞:old-report.md archive/2026-Q1/old-report.md
-npx docz-cli rm 吴鹏飞:temp/draft.md
+# Concatenate files
+for f in intro.md body.md conclusion.md; do
+  npx docz-cli cat 研发:chapters/$f
+done | npx docz-cli write 研发:full-report.md -
 ```
 
-## 注意事项
+## Tips
 
-- DocSync 底层基于 Git，每次写操作自动产生 commit
-- 删除进入回收站，30 天内可恢复
-- 文本文件（.md / .csv / .html）可直接读取
-- 二进制文件建议用 upload，不适合 cat
+- Prefer pipes over multiple round-trips. `cat | grep` is one operation, not two.
+- `cat` returns raw text — pipe to `head`, `tail`, `grep`, `awk`, `sed`, `wc`, `sort`, `uniq` as needed.
+- For CSV data, use `cut`, `awk`, and `sort`.
+- `write <path> -` accepts any stdin — command output, heredocs, pipe chains.
+- `write` overwrites the entire file (not append). To append, `cat` first, combine, then `write` back.
+- `rm` moves to trash (recoverable for 30 days), not permanent delete.
+- `mv` renames/moves within the same space.
+- Backend is Git: every write creates a commit. Use `log` to see history.
+- Text files (.md, .csv, .html) work with `cat`. Binary files (images, PDF) use `upload` only.
