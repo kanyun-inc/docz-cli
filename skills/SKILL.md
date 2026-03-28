@@ -19,20 +19,14 @@ allowed-tools: Bash(npx docz-cli:*), Bash(docz-cli:*), Bash(export DOCSYNC_API_T
 
 ## 认证检查
 
-执行任何操作前，先检查 token 是否可用：
+首次使用前检查环境变量：
 
 ```bash
-npx docz-cli whoami
+echo $DOCSYNC_API_TOKEN
 ```
 
-- **成功**：显示用户名，直接执行后续操作
-- **失败**（`No token configured`）：检查 `DOCSYNC_API_TOKEN` 环境变量是否存在。如果不存在，请用户提供 DocSync API Token（获取方式：https://docz.zhenguanyu.com/settings → Account → API Tokens → New Token），然后：
-
-```bash
-export DOCSYNC_API_TOKEN=<用户提供的 token>
-```
-
-之后所有 `npx docz-cli` 命令自动使用该 token。
+- **有值**：直接使用
+- **空**：引导用户去 https://docz.zhenguanyu.com/settings → Account → API Tokens → New Token 创建 token，然后让用户把 token 配置到 Rush 的用户环境变量设置中
 
 ## 命令速查
 
