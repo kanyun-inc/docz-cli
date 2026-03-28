@@ -1,7 +1,7 @@
 ---
 name: docsync
 description: 读写公司 DocSync 文档。触发："查看文档"、"上传文档"、"读取 Space"、"docz"、"DocSync"
-version: 0.3.0
+version: 0.3.1
 author: kris
 tags:
   - docsync
@@ -10,119 +10,107 @@ tags:
   - knowledge
 user-invocable: true
 argument-hint: "<command> <space>:<path>"
+allowed-tools: Bash(npx docz-cli:*), Bash(docz-cli:*), Bash(export DOCSYNC_API_TOKEN:*)
 ---
 
 # DocSync — 读写公司文档
 
-读写 DocSync（docz.zhenguanyu.com）平台上的文档。
+通过 `docz-cli` 命令行工具读写 DocSync（docz.zhenguanyu.com）平台上的文档。
 
-## 使用方式选择
+## 认证检查
 
-**优先使用 MCP 工具**（`mcp__docsync__*`）。MCP 工具自带认证，无需额外配置。
-
-如果 MCP 工具不可用（未配置 docsync MCP server），回退到 CLI 方式。
-
-### 检查 MCP 是否可用
-
-直接调用 `mcp__docsync__docsync_list_spaces`。如果工具存在且返回结果，使用 MCP 方式。如果工具不存在，使用 CLI 方式。
-
-## 方式一：MCP 工具（推荐）
-
-### 工具列表
-
-| 工具 | 用途 |
-|------|------|
-| `docsync_list_spaces` | 列出所有可访问的 Space |
-| `docsync_list_files` | 列出目录内容。参数：`space`（名称或 ID）, `path`（可选） |
-| `docsync_read_file` | 读取文件内容。参数：`space`, `path` |
-| `docsync_upload_file` | 上传文件。参数：`space`, `path`（目录）, `filename`, `content` |
-| `docsync_mkdir` | 创建文件夹。参数：`space`, `path` |
-| `docsync_delete` | 删除文件/文件夹。参数：`space`, `path` |
-| `docsync_file_history` | 查看变更历史。参数：`space`, `path`（可选） |
-
-### 使用示例
-
-**浏览文档**：
-1. `docsync_list_spaces` → 列出所有 Space
-2. `docsync_list_files(space="研发")` → 列出根目录
-3. `docsync_list_files(space="研发", path="docs")` → 列出子目录
-4. `docsync_read_file(space="研发", path="docs/guide.md")` → 读取文件
-
-**上传文档**：
-1. `docsync_upload_file(space="吴鹏飞", path="reports", filename="summary.md", content="# 报告内容...")` → 上传
-
-**查看历史**：
-1. `docsync_file_history(space="研发", path="docs/guide.md")` → 文件变更记录
-
-### MCP 方式下的搜索/处理
-
-MCP 工具返回的是文本内容，Agent 可以直接在内存中搜索、分析、转换，然后用 `docsync_upload_file` 写回。等价于 CLI 管道操作，但不需要 Bash。
-
-例如用户说"帮我在研发 Space 里找包含'部署'的文档"：
-1. `docsync_list_files(space="研发")` 获取文件列表
-2. 逐个 `docsync_read_file` 读取
-3. 在内容中查找"部署"关键词
-4. 返回匹配结果
-
-## 方式二：CLI 工具（备选）
-
-需要环境中有 `DOCSYNC_API_TOKEN` 环境变量或已执行 `docz-cli login`。
-
-### 安装
+执行任何操作前，先检查 token 是否可用：
 
 ```bash
-npm install -g docz-cli    # 全局安装
-# 或
-npx docz-cli <command>     # 免安装
+npx docz-cli whoami
 ```
 
-### Token 配置
+- **成功**：显示用户名，直接执行后续操作
+- **失败**（`No token configured`）：检查 `DOCSYNC_API_TOKEN` 环境变量是否存在。如果不存在，请用户提供 DocSync API Token（获取方式：https://docz.zhenguanyu.com/settings → Account → API Tokens → New Token），然后：
 
 ```bash
-# 如果 DOCSYNC_API_TOKEN 环境变量已设置，直接可用
-# 否则：
-docz-cli login --token <token>
+export DOCSYNC_API_TOKEN=<用户提供的 token>
 ```
 
-Token 获取：https://docz.zhenguanyu.com/settings → Account → API Tokens → New Token
+之后所有 `npx docz-cli` 命令自动使用该 token。
 
-### 命令速查
+## 命令速查
 
 ```bash
 # 浏览
-docz-cli spaces                        # 列出所有 Space
-docz-cli ls <space>[:<path>]           # 列出目录内容
-docz-cli cat <space>:<path>            # 读取文件内容
+npx docz-cli spaces                        # 列出所有 Space
+npx docz-cli ls <space>[:<path>]           # 列出目录内容
+npx docz-cli cat <space>:<path>            # 读取文件内容
 
 # 写入
-docz-cli write <space>:<path> '<content>'   # 写内容到文件
-docz-cli write <space>:<path> -             # 从 stdin 写入
-docz-cli upload <local-file> <space>[:<dir>]
-docz-cli mkdir <space>:<path>
+npx docz-cli write <space>:<path> '<content>'   # 写内容到文件
+npx docz-cli write <space>:<path> -             # 从 stdin 写入
+npx docz-cli upload <local-file> <space>[:<dir>]
+npx docz-cli mkdir <space>:<path>
 
 # 管理
-docz-cli mv <space>:<from> <to>
-docz-cli rm <space>:<path>
-docz-cli log <space>[:<path>]
-docz-cli trash <space>
+npx docz-cli mv <space>:<from> <to>
+npx docz-cli rm <space>:<path>
+npx docz-cli log <space>[:<path>]
+npx docz-cli trash <space>
 ```
 
-### 管道操作（CLI 独有优势）
+## 寻址格式
+
+`<space>:<path>` — Space 支持名称（`研发`）或 ID（`c4d903fe-...`）
+
+- `研发` — 根目录
+- `研发:docs` — 子目录
+- `研发:docs/guide.md` — 具体文件
+
+## 管道操作
+
+`cat` 输出到 stdout，`write ... -` 从 stdin 读取：
 
 ```bash
-docz-cli cat 研发:docs/guide.md | grep "部署"
-docz-cli cat 研发:data.csv | cut -d',' -f1,3 | head -10
-docz-cli cat 吴鹏飞:config.md | sed 's/old/new/g' | docz-cli write 吴鹏飞:config.md -
+npx docz-cli cat 研发:docs/guide.md | grep "部署"
+npx docz-cli cat 研发:data.csv | cut -d',' -f1,3 | head -10
+npx docz-cli cat 吴鹏飞:config.md | sed 's/old/new/g' | npx docz-cli write 吴鹏飞:config.md -
 ```
 
-## 寻址格式（MCP 和 CLI 通用）
+## 使用场景
 
-- Space 支持名称（`研发`）或 ID（`c4d903fe-...`）
-- CLI 格式：`<space>:<path>`（如 `研发:docs/guide.md`）
-- MCP 格式：`space="研发", path="docs/guide.md"`
+### 查看文档
+
+```bash
+npx docz-cli spaces
+npx docz-cli ls 研发
+npx docz-cli cat 研发:docs/guide.md
+```
+
+### 上传/保存内容
+
+```bash
+npx docz-cli write 吴鹏飞:reports/summary.md '# 周报摘要
+- 完成了 XXX
+- 修复了 YYY'
+
+npx docz-cli upload ./analysis.csv 吴鹏飞:data
+```
+
+### 查看历史
+
+```bash
+npx docz-cli log 研发
+npx docz-cli log 研发:docs/guide.md
+```
+
+### 整理文档
+
+```bash
+npx docz-cli mkdir 吴鹏飞:archive/2026-Q1
+npx docz-cli mv 吴鹏飞:old-report.md archive/2026-Q1/old-report.md
+npx docz-cli rm 吴鹏飞:temp/draft.md
+```
 
 ## 注意事项
 
 - DocSync 底层基于 Git，每次写操作自动产生 commit
-- 删除不是永久的，30 天内可从回收站恢复
-- 文本文件（.md / .csv / .html）可直接读取，二进制文件建议上传而非读取
+- 删除进入回收站，30 天内可恢复
+- 文本文件（.md / .csv / .html）可直接读取
+- 二进制文件建议用 upload，不适合 cat
