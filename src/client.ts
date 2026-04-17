@@ -66,7 +66,6 @@ export interface ShareLink {
 export interface ShareFileInfo {
   file_path: string;
   file_name: string;
-  space_id: string;
   space_name: string;
   created_by_name: string;
   expires_at: string | null;

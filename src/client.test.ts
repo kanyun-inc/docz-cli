@@ -57,7 +57,6 @@ const mockShareLink = {
 const mockShareFileInfo = {
   file_path: 'README.md',
   file_name: 'README.md',
-  space_id: SID,
   space_name: '研发',
   created_by_name: '测试用户',
   expires_at: null,
