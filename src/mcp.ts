@@ -320,7 +320,7 @@ export async function startMcpServer(): Promise<void> {
           );
           if (logs.length === 0) return ok('没有变更历史。');
           const lines = logs.map(
-            (l) => `${l.hash.substring(0, 7)}  ${l.date}  ${l.message}`
+            (l) => `${l.hash}  ${l.date}  ${l.message}`
           );
           return ok(lines.join('\n'));
         }
