@@ -61,7 +61,7 @@ function fail(err: unknown) {
 
 export async function startMcpServer(): Promise<void> {
   const server = new Server(
-    { name: 'docz-mcp', version: '0.5.0' },
+    { name: 'docz-mcp', version: '0.4.0' },
     { capabilities: { tools: {} } }
   );
 
