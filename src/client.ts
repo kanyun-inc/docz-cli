@@ -12,6 +12,7 @@
 export interface Space {
   id: string;
   name: string;
+  slug?: string;
   owner_id: string;
   is_private: boolean;
   created_at: string;

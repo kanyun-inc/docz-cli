@@ -48,7 +48,7 @@ function formatSize(bytes: number): string {
 
 // Short URL patterns: /s/{slug}/f/{fileId} or /s/{slug}
 const SHORT_URL_RE = /\/s\/([^/]+)\/f\/([^/?\s]+)/;
-const SLUG_ONLY_RE = /\/s\/([^/?\s]+)\/?$/;
+const SLUG_ONLY_RE = /\/s\/([^/?\s]+)\/?(?:\?.*)?$/;
 // Share URL: /share/{token}
 const SHARE_URL_RE = /\/share\/([^/?\s]+)/;
 
@@ -85,9 +85,7 @@ async function resolveSlug(
 ): Promise<{ id: string }> {
   try {
     const spaces = await client.listSpaces();
-    const found = spaces.find(
-      (s) => (s as unknown as Record<string, unknown>).slug === slug
-    );
+    const found = spaces.find((s) => s.slug === slug);
     if (found) return found;
   } catch {
     // fall through to by-slug API
@@ -460,8 +458,11 @@ export function registerCommands(program: Command): void {
           console.log(`File: ${info.file_path} (${info.space_name})`);
           console.log(`Shared by: ${info.created_by_name} | Expires: ${info.expires_at ?? 'never'}`);
           console.log('---');
-        } catch {
-          // info endpoint may fail, still show content
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (!msg.includes('404')) {
+            console.error(`Warning: failed to fetch share info: ${msg}`);
+          }
         }
       }
       const content = await client.getSharedFile(token);

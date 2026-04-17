@@ -326,12 +326,14 @@ export async function startMcpServer(): Promise<void> {
         }
 
         case 'docz_share_create': {
+          const sharePath = String(args.path ?? '');
+          if (!sharePath) return fail('path is required');
           const sid = await resolveSpaceId(client, String(args.space));
           const opts: { expiresAt?: string; userIds?: string[]; groupIds?: string[] } = {};
           if (args.expires) opts.expiresAt = parseExpires(String(args.expires));
           if (args.userIds) opts.userIds = args.userIds as string[];
           if (args.groupIds) opts.groupIds = args.groupIds as string[];
-          const link = await client.createShareLink(sid, String(args.path), opts);
+          const link = await client.createShareLink(sid, sharePath, opts);
           return ok(`已创建分享链接:\ntoken: ${link.token}\nurl: ${getBaseUrl()}/share/${link.token}\n过期: ${link.expires_at ?? '永不'}`);
         }
 
@@ -340,7 +342,7 @@ export async function startMcpServer(): Promise<void> {
           const links = await client.listShareLinks(sid, args.filePath ? String(args.filePath) : undefined);
           if (links.length === 0) return ok('没有分享链接。');
           const lines = links.map(
-            (l) => `${l.token}  ${l.file_path}  过期: ${l.expires_at ?? '永不'}  创建者: ${l.created_by_name ?? l.created_by}`
+            (l) => `${l.token}  ${l.file_path}  过期: ${l.expires_at ?? '永不'}  创建者: ${l.created_by_name ?? l.created_by_email ?? l.created_by}`
           );
           return ok(lines.join('\n'));
         }
