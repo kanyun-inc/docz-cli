@@ -15,21 +15,24 @@
 
 ```bash
 # Login
-npx docz-cli login --token <your-token>
+npx docz-cli@latest login --token <your-token>
 
 # Browse
-npx docz-cli spaces
-npx docz-cli ls 研发
-npx docz-cli cat 研发:docs/guide.md
+npx docz-cli@latest spaces
+npx docz-cli@latest ls 研发
+npx docz-cli@latest cat 研发:docs/guide.md
 
 # Write
-npx docz-cli write 吴鹏飞:notes/todo.md '# TODO List'
+npx docz-cli@latest write 吴鹏飞:notes/todo.md '# TODO List'
 ```
 
 ## Features
 
 - **Simple addressing** — `<space>:<path>` format, Space supports name or ID
+- **Short URL support** — paste `https://docz.xxx.com/s/slug/f/fileId` directly into cat/ls/log
 - **Full file operations** — ls, cat, upload, write, mkdir, rm, mv
+- **Share links** — create, list, update, access, delete share links from CLI
+- **File diff** — view file-level unified diff or space-level change summary
 - **Git-backed** — every write creates a commit, built-in version history
 - **Trash recovery** — deleted files recoverable within 30 days
 - **MCP Server** — built-in stdio MCP server for AI agent integration
@@ -40,9 +43,11 @@ npx docz-cli write 吴鹏飞:notes/todo.md '# TODO List'
 **Requirements:** Node.js >= 22.0.0
 
 ```bash
-npx docz-cli <command>       # Use directly via npx
-npm install -g docz-cli      # Or global install, then use `docz` shorthand
+npx docz-cli@latest <command>   # Always uses the latest version (recommended)
+npm install -g docz-cli          # Or global install, then use `docz` shorthand
 ```
+
+> **Auto-update**: Using `npx docz-cli@latest` ensures you always run the latest version without manual updates. Global install requires `npm update -g docz-cli` to update.
 
 > Global install registers both `docz-cli` and `docz` commands. Examples below use `docz-cli`; replace with `docz` if installed globally.
 
@@ -80,6 +85,13 @@ export DOCSYNC_API_TOKEN=<your-token>
 | `mv <space>:<from> <to>` | Rename or move |
 | `log <space>[:<path>]` | Show change history |
 | `trash <space>` | Show deleted files |
+| `diff <space>[:<path>] <commit> [<from>]` | Show changes (file or space level) |
+| `share create <space>:<path>` | Create share link |
+| `share list <space>` | List share links |
+| `share update <space> <link-id>` | Update share link |
+| `share cat <token-or-url>` | Read shared file |
+| `share info <token-or-url>` | Show share link info |
+| `share rm <space> <link-id>` | Delete share link |
 | `mcp` | Start MCP stdio server |
 
 ## Usage Examples
@@ -91,6 +103,22 @@ docz-cli spaces                    # List all spaces
 docz-cli ls 研发                    # List root directory
 docz-cli ls 研发:docs               # List subdirectory
 docz-cli cat 研发:docs/guide.md     # Read file content
+```
+
+### Short URL
+
+`cat`, `ls`, `log` accept DocSync short URLs directly:
+
+```bash
+# These are equivalent
+docz-cli cat 闫洪康:AI-Coding技巧总结12.md
+docz-cli cat https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c
+
+# List space root via slug
+docz-cli ls https://docz.zhenguanyu.com/s/yanfa
+
+# File history via short URL
+docz-cli log https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c
 ```
 
 ### Write
@@ -110,6 +138,46 @@ docz-cli rm 研发:deprecated.md          # Delete (recoverable)
 docz-cli log 研发                        # Space history
 docz-cli log 研发:docs/guide.md         # File history
 docz-cli trash 研发                      # View trash
+```
+
+### Share Links
+
+```bash
+# Create (with optional expiry and visibility)
+docz-cli share create 研发:docs/guide.md --expires 7d --users user@co.com
+
+# List all share links in a space
+docz-cli share list 研发
+docz-cli share list 研发 --file docs/guide.md    # Filter by file
+
+# Access shared content (token or full URL)
+docz-cli share cat xYz123AbC
+docz-cli share cat https://docz.zhenguanyu.com/share/xYz123AbC
+docz-cli share cat xYz123AbC --raw | grep "部署"  # Raw output for pipes
+
+# View share link info
+docz-cli share info xYz123AbC
+
+# Update and delete (requires space context)
+docz-cli share update 研发 <link-id> --expires 30d
+docz-cli share rm 研发 <link-id>
+```
+
+### Diff
+
+```bash
+# View what changed in a commit (file level)
+docz-cli diff 研发:docs/guide.md af0fb9b
+
+# Compare two commits
+docz-cli diff 研发:docs/guide.md af0fb9b b2c3d4e
+
+# Space-level: which files changed in a commit
+docz-cli diff 研发 af0fb9b
+
+# Typical workflow: log → pick commit → diff
+docz-cli log 研发:docs/guide.md
+docz-cli diff 研发:docs/guide.md af0fb9b
 ```
 
 ### Pipes
@@ -144,7 +212,7 @@ Add to your MCP settings:
   "mcpServers": {
     "docz-mcp": {
       "command": "npx",
-      "args": ["-y", "docz-cli", "mcp"],
+      "args": ["-y", "docz-cli@latest", "mcp"],
       "env": {
         "DOCSYNC_API_TOKEN": "<your-token>"
       }
@@ -152,6 +220,8 @@ Add to your MCP settings:
   }
 }
 ```
+
+> Using `docz-cli@latest` in MCP config ensures AI agents always use the latest version.
 
 ### MCP Tools
 
@@ -164,6 +234,12 @@ Add to your MCP settings:
 | `docz_mkdir` | Create a folder |
 | `docz_delete` | Delete file/folder |
 | `docz_file_history` | View change history |
+| `docz_share_create` | Create share link |
+| `docz_share_list` | List share links |
+| `docz_share_read` | Read shared file by token |
+| `docz_share_info` | View share link info |
+| `docz_share_delete` | Delete share link |
+| `docz_diff` | View file or space diff |
 
 ## AI Agent Skill
 
@@ -190,6 +266,14 @@ docz-cli wraps the DocSync REST API:
 | `mv` | `POST /api/spaces/{id}/files/rename` |
 | `log` | `GET /api/spaces/{id}/log/[{path}]` |
 | `trash` | `GET /api/spaces/{id}/trash` |
+| `diff` | `GET /api/spaces/{id}/diff/[{path}]?from=&to=` |
+| `share create` | `POST /api/spaces/{id}/share-links` |
+| `share list` | `GET /api/spaces/{id}/share-links` |
+| `share update` | `PUT /api/spaces/{id}/share-links/{linkId}` |
+| `share cat` | `GET /api/share/{token}` |
+| `share info` | `GET /api/share/{token}/info` |
+| `share rm` | `DELETE /api/spaces/{id}/share-links/{linkId}` |
+| Short URL resolve | `GET /api/spaces/by-slug/{slug}` + `GET /api/file-refs/{fileId}` |
 
 Auth: `Authorization: Bearer <token>`. Backend is Git — every write is a commit.
 

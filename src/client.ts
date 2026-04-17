@@ -12,6 +12,7 @@
 export interface Space {
   id: string;
   name: string;
+  slug?: string;
   owner_id: string;
   is_private: boolean;
   created_at: string;
@@ -46,6 +47,54 @@ export interface User {
   is_admin: boolean;
   is_active: boolean;
   created_at: string;
+}
+
+export interface ShareLink {
+  id: string;
+  token: string;
+  space_id: string;
+  file_path: string;
+  created_by: string;
+  created_by_name?: string;
+  created_by_email?: string;
+  expires_at: string | null;
+  created_at: string;
+  user_ids?: string[];
+  group_ids?: string[];
+}
+
+export interface ShareFileInfo {
+  file_path: string;
+  file_name: string;
+  space_name: string;
+  created_by_name: string;
+  expires_at: string | null;
+}
+
+export interface DiffResponse {
+  from: string;
+  to: string;
+  path: string;
+  diff: string;
+  old_body: string;
+  new_body: string;
+}
+
+export interface DiffFileEntry {
+  path: string;
+  status: string;
+}
+
+export interface DiffSummary {
+  from: string;
+  to: string;
+  files: DiffFileEntry[];
+}
+
+export interface FileRef {
+  id: string;
+  space_id: string;
+  path: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -173,5 +222,79 @@ export class DocSyncClient {
   // --- Trash ---
   async trash(spaceId: string): Promise<TrashEntry[]> {
     return this.request(`/api/spaces/${spaceId}/trash`);
+  }
+
+  // --- Share Links ---
+  async createShareLink(
+    spaceId: string,
+    filePath: string,
+    opts?: { expiresAt?: string; userIds?: string[]; groupIds?: string[] }
+  ): Promise<ShareLink> {
+    const body: Record<string, unknown> = { file_path: filePath };
+    if (opts?.expiresAt) body.expires_at = opts.expiresAt;
+    if (opts?.userIds?.length) body.user_ids = opts.userIds;
+    if (opts?.groupIds?.length) body.group_ids = opts.groupIds;
+    return this.request(`/api/spaces/${spaceId}/share-links`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  async listShareLinks(spaceId: string, filePath?: string): Promise<ShareLink[]> {
+    const q = filePath ? `?file_path=${encodeURIComponent(filePath)}` : '';
+    return this.request(`/api/spaces/${spaceId}/share-links${q}`);
+  }
+
+  async updateShareLink(
+    spaceId: string,
+    linkId: string,
+    opts: { expiresAt?: string; userIds?: string[]; groupIds?: string[] }
+  ): Promise<ShareLink> {
+    const body: Record<string, unknown> = {};
+    if (opts.expiresAt !== undefined) body.expires_at = opts.expiresAt;
+    if (opts.userIds) body.user_ids = opts.userIds;
+    if (opts.groupIds) body.group_ids = opts.groupIds;
+    return this.request(`/api/spaces/${spaceId}/share-links/${linkId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  async deleteShareLink(spaceId: string, linkId: string): Promise<void> {
+    await this.request(`/api/spaces/${spaceId}/share-links/${linkId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getSharedFile(token: string): Promise<string> {
+    return this.request(`/api/share/${token}`);
+  }
+
+  async getSharedFileInfo(token: string): Promise<ShareFileInfo> {
+    return this.request(`/api/share/${token}/info`);
+  }
+
+  // --- Diff ---
+  async diffFile(spaceId: string, filePath: string, to: string, from?: string): Promise<DiffResponse> {
+    const params = new URLSearchParams({ to });
+    if (from) params.set('from', from);
+    return this.request(`/api/spaces/${spaceId}/diff/${encodeURIComponent(filePath)}?${params}`);
+  }
+
+  async diffSummary(spaceId: string, to: string, from?: string): Promise<DiffSummary> {
+    const params = new URLSearchParams({ to });
+    if (from) params.set('from', from);
+    return this.request(`/api/spaces/${spaceId}/diff?${params}`);
+  }
+
+  // --- Resolve short URLs ---
+  async resolveBySlug(slug: string): Promise<Space> {
+    return this.request(`/api/spaces/by-slug/${encodeURIComponent(slug)}`);
+  }
+
+  async resolveFileRef(fileId: string): Promise<FileRef> {
+    return this.request(`/api/file-refs/${encodeURIComponent(fileId)}`);
   }
 }

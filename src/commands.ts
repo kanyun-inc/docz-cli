@@ -46,6 +46,86 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+// Short URL patterns: /s/{slug}/f/{fileId} or /s/{slug}
+const SHORT_URL_RE = /\/s\/([^/]+)\/f\/([^/?\s]+)/;
+const SLUG_ONLY_RE = /\/s\/([^/?\s]+)\/?(?:\?.*)?$/;
+// Share URL: /share/{token}
+const SHARE_URL_RE = /\/share\/([^/?\s]+)/;
+
+/**
+ * Detect if input is a URL and resolve it to { spaceId, path }.
+ * Returns null if not a URL.
+ */
+async function resolveUrl(
+  client: DocSyncClient,
+  input: string
+): Promise<{ spaceId: string; path: string } | null> {
+  // Match /s/{slug}/f/{fileId}
+  const fileMatch = input.match(SHORT_URL_RE);
+  if (fileMatch) {
+    const [, slug, fileId] = fileMatch;
+    const space = await resolveSlug(client, slug);
+    const ref = await client.resolveFileRef(fileId);
+    return { spaceId: space.id, path: ref.path };
+  }
+  // Match /s/{slug} (directory listing)
+  const slugMatch = input.match(SLUG_ONLY_RE);
+  if (slugMatch) {
+    const [, slug] = slugMatch;
+    const space = await resolveSlug(client, slug);
+    return { spaceId: space.id, path: '' };
+  }
+  return null;
+}
+
+/** Resolve slug: try local spaces cache first, then API */
+async function resolveSlug(
+  client: DocSyncClient,
+  slug: string
+): Promise<{ id: string }> {
+  try {
+    const spaces = await client.listSpaces();
+    const found = spaces.find((s) => s.slug === slug);
+    if (found) return found;
+  } catch {
+    // fall through to by-slug API
+  }
+  return client.resolveBySlug(slug);
+}
+
+/**
+ * Resolve target: if it's a short URL, resolve it; otherwise use parseTarget + resolveSpace.
+ */
+async function resolveTarget(
+  client: DocSyncClient,
+  args: string[]
+): Promise<{ spaceId: string; path: string }> {
+  const first = args[0];
+  if (first && (first.startsWith('http://') || first.startsWith('https://'))) {
+    const result = await resolveUrl(client, first);
+    if (result) return result;
+  }
+  const { space, path } = parseTarget(args);
+  const s = await client.resolveSpace(space);
+  return { spaceId: s.id, path };
+}
+
+/** Parse relative duration (7d, 24h, 30d) to RFC3339 */
+export function parseExpires(value: string): string {
+  const match = value.match(/^(\d+)([dh])$/);
+  if (!match) throw new Error(`Invalid expires format: "${value}". Use e.g. 7d, 24h, 30d`);
+  const [, num, unit] = match;
+  const ms = unit === 'd' ? Number(num) * 86400000 : Number(num) * 3600000;
+  return new Date(Date.now() + ms).toISOString();
+}
+
+/** Extract share token from URL or return as-is */
+function extractShareToken(input: string): string {
+  const m = input.match(SHARE_URL_RE);
+  if (m) return m[1];
+  return input;
+}
+
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
@@ -110,13 +190,12 @@ export function registerCommands(program: Command): void {
   // --- ls ---
   program
     .command('ls')
-    .description('List files — docz ls <space>[:<path>]')
+    .description('List files — docz ls <space>[:<path>] or <url>')
     .argument('<target...>')
     .action(async (args: string[]) => {
-      const { space, path } = parseTarget(args);
       const client = getClient();
-      const s = await client.resolveSpace(space);
-      const entries = await client.ls(s.id, path);
+      const { spaceId, path } = await resolveTarget(client, args);
+      const entries = await client.ls(spaceId, path);
       if (entries.length === 0) {
         console.log('(empty)');
         return;
@@ -133,19 +212,18 @@ export function registerCommands(program: Command): void {
   // --- cat ---
   program
     .command('cat')
-    .description('Read file content — docz cat <space>:<path>')
+    .description('Read file content — docz cat <space>:<path> or <url>')
     .argument('<target...>')
     .action(async (args: string[]) => {
-      const { space, path } = parseTarget(args);
+      const client = getClient();
+      const { spaceId, path } = await resolveTarget(client, args);
       if (!path) {
         console.error(
           'Error: file path is required. Usage: docz cat <space>:<path>'
         );
         process.exit(1);
       }
-      const client = getClient();
-      const s = await client.resolveSpace(space);
-      const content = await client.cat(s.id, path);
+      const content = await client.cat(spaceId, path);
       process.stdout.write(content);
     });
 
@@ -259,19 +337,18 @@ export function registerCommands(program: Command): void {
   // --- log ---
   program
     .command('log')
-    .description('Show change history — docz log <space>[:<path>]')
+    .description('Show change history — docz log <space>[:<path>] or <url>')
     .argument('<target...>')
     .action(async (args: string[]) => {
-      const { space, path } = parseTarget(args);
       const client = getClient();
-      const s = await client.resolveSpace(space);
-      const logs = await client.log(s.id, path || undefined);
+      const { spaceId, path } = await resolveTarget(client, args);
+      const logs = await client.log(spaceId, path || undefined);
       if (logs.length === 0) {
         console.log('No history.');
         return;
       }
       for (const l of logs) {
-        console.log(`${l.hash.substring(0, 7)}  ${l.date}  ${l.message}`);
+        console.log(`${l.hash}  ${l.date}  ${l.message}`);
       }
     });
 
@@ -292,6 +369,159 @@ export function registerCommands(program: Command): void {
         console.log(
           `${t.path}\tdeleted ${t.deleted_at}\t${t.commit.substring(0, 7)}`
         );
+      }
+    });
+
+  // --- share ---
+  const share = program.command('share').description('Manage share links');
+
+  share
+    .command('create')
+    .description('Create share link — docz share create <space>:<path>')
+    .argument('<target>', 'space:path')
+    .option('--expires <duration>', 'Expiry duration (e.g. 7d, 24h)')
+    .option('--users <emails>', 'Comma-separated user emails or IDs')
+    .option('--groups <ids>', 'Comma-separated group IDs')
+    .action(async (target: string, opts: { expires?: string; users?: string; groups?: string }) => {
+      const { space, path } = parseTarget([target]);
+      if (!path) {
+        console.error('Error: file path is required. Usage: docz share create <space>:<path>');
+        process.exit(1);
+      }
+      const client = getClient();
+      const s = await client.resolveSpace(space);
+      const apiOpts: { expiresAt?: string; userIds?: string[]; groupIds?: string[] } = {};
+      if (opts.expires) apiOpts.expiresAt = parseExpires(opts.expires);
+      if (opts.users) apiOpts.userIds = opts.users.split(',').map((s) => s.trim());
+      if (opts.groups) apiOpts.groupIds = opts.groups.split(',').map((s) => s.trim());
+      const link = await client.createShareLink(s.id, path, apiOpts);
+      const baseUrl = getBaseUrl();
+      console.log(`Created share link:`);
+      console.log(`  id:      ${link.id}`);
+      console.log(`  token:   ${link.token}`);
+      console.log(`  url:     ${baseUrl}/share/${link.token}`);
+      console.log(`  expires: ${link.expires_at ?? 'never'}`);
+      if (link.user_ids?.length) console.log(`  users:   ${link.user_ids.join(', ')}`);
+      if (link.group_ids?.length) console.log(`  groups:  ${link.group_ids.length}`);
+    });
+
+  share
+    .command('list')
+    .description('List share links — docz share list <space>')
+    .argument('<space>')
+    .option('--file <path>', 'Filter by file path')
+    .action(async (spaceName: string, opts: { file?: string }) => {
+      const client = getClient();
+      const s = await client.resolveSpace(spaceName);
+      const links = await client.listShareLinks(s.id, opts.file);
+      if (links.length === 0) {
+        console.log('No share links.');
+        return;
+      }
+      for (const l of links) {
+        const expires = l.expires_at ?? 'never';
+        const creator = l.created_by_name ?? l.created_by_email ?? l.created_by;
+        console.log(`${l.id}\t${l.token}\t${l.file_path}\t${expires}\t${creator}`);
+      }
+    });
+
+  share
+    .command('update')
+    .description('Update share link — docz share update <space> <link-id>')
+    .argument('<space>')
+    .argument('<linkId>')
+    .option('--expires <duration>', 'New expiry duration (e.g. 30d)')
+    .option('--users <emails>', 'Comma-separated user emails or IDs')
+    .option('--groups <ids>', 'Comma-separated group IDs')
+    .action(async (spaceName: string, linkId: string, opts: { expires?: string; users?: string; groups?: string }) => {
+      const client = getClient();
+      const s = await client.resolveSpace(spaceName);
+      const apiOpts: { expiresAt?: string; userIds?: string[]; groupIds?: string[] } = {};
+      if (opts.expires) apiOpts.expiresAt = parseExpires(opts.expires);
+      if (opts.users) apiOpts.userIds = opts.users.split(',').map((s) => s.trim());
+      if (opts.groups) apiOpts.groupIds = opts.groups.split(',').map((s) => s.trim());
+      await client.updateShareLink(s.id, linkId, apiOpts);
+      console.log(`Updated share link: ${linkId}`);
+    });
+
+  share
+    .command('cat')
+    .description('Read shared file — docz share cat <token-or-url>')
+    .argument('<token>', 'Share token or full URL')
+    .option('--raw', 'Output raw content only')
+    .action(async (tokenArg: string, opts: { raw?: boolean }) => {
+      const client = getClient();
+      const token = extractShareToken(tokenArg);
+      if (!opts.raw) {
+        try {
+          const info = await client.getSharedFileInfo(token);
+          console.log(`File: ${info.file_path} (${info.space_name})`);
+          console.log(`Shared by: ${info.created_by_name} | Expires: ${info.expires_at ?? 'never'}`);
+          console.log('---');
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (!msg.includes('404')) {
+            console.error(`Warning: failed to fetch share info: ${msg}`);
+          }
+        }
+      }
+      const content = await client.getSharedFile(token);
+      process.stdout.write(content);
+    });
+
+  share
+    .command('info')
+    .description('Show share link info — docz share info <token-or-url>')
+    .argument('<token>', 'Share token or full URL')
+    .action(async (tokenArg: string) => {
+      const client = getClient();
+      const token = extractShareToken(tokenArg);
+      const info = await client.getSharedFileInfo(token);
+      console.log(`File:       ${info.file_path}`);
+      console.log(`Space:      ${info.space_name}`);
+      console.log(`Shared by:  ${info.created_by_name}`);
+      console.log(`Expires:    ${info.expires_at ?? 'never'}`);
+    });
+
+  share
+    .command('rm')
+    .description('Delete share link — docz share rm <space> <link-id>')
+    .argument('<space>')
+    .argument('<linkId>')
+    .action(async (spaceName: string, linkId: string) => {
+      const client = getClient();
+      const s = await client.resolveSpace(spaceName);
+      await client.deleteShareLink(s.id, linkId);
+      console.log(`Deleted share link: ${linkId}`);
+    });
+
+  // --- diff ---
+  program
+    .command('diff')
+    .description('Show changes — docz diff <space>[:<path>] <commit> [<from>]')
+    .argument('<target>', 'space or space:path')
+    .argument('<to>', 'Commit hash')
+    .argument('[from]', 'From commit hash (default: to^)')
+    .action(async (target: string, to: string, from?: string) => {
+      const client = getClient();
+      const { space, path } = parseTarget([target]);
+      const s = await client.resolveSpace(space);
+      if (path) {
+        const result = await client.diffFile(s.id, path, to, from);
+        if (result.diff) {
+          process.stdout.write(result.diff);
+        } else {
+          console.log('No changes.');
+        }
+      } else {
+        const result = await client.diffSummary(s.id, to, from);
+        if (result.files.length === 0) {
+          console.log('No changes.');
+          return;
+        }
+        for (const f of result.files) {
+          console.log(`${f.status}  ${f.path}`);
+        }
       }
     });
 }
