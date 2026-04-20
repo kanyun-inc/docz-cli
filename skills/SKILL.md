@@ -1,7 +1,7 @@
 ---
 name: docz
 description: Read and write company DocSync documents. Triggers on "docs", "documents", "upload file", "read space", "docz", "DocSync", "share link", "diff"
-version: 0.6.0
+version: 0.7.0
 author: kris
 tags:
   - docsync
