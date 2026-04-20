@@ -29,7 +29,7 @@ npx docz-cli@latest write 吴鹏飞:notes/todo.md '# TODO List'
 ## Features
 
 - **Simple addressing** — `<space>:<path>` format, Space supports name or ID
-- **Short URL support** — paste `https://docz.xxx.com/s/slug/f/fileId` directly into cat/ls/log
+- **Short URL support** — paste `https://docz.xxx.com/s/slug/f/fileId` directly into cat/ls/log, or generate with `shortlink`
 - **Full file operations** — ls, cat, upload, write, mkdir, rm, mv
 - **Share links** — create, list, update, access, delete share links from CLI
 - **File diff** — view file-level unified diff or space-level change summary
@@ -84,6 +84,7 @@ export DOCSYNC_API_TOKEN=<your-token>
 | `rm <space>:<path>` | Delete file/folder (30-day trash) |
 | `mv <space>:<from> <to>` | Rename or move |
 | `log <space>[:<path>]` | Show change history |
+| `shortlink <space>:<path>` | Get short URL for file |
 | `trash <space>` | Show deleted files |
 | `diff <space>[:<path>] <commit> [<from>]` | Show changes (file or space level) |
 | `share create <space>:<path>` | Create share link |
@@ -107,17 +108,16 @@ docz-cli cat 研发:docs/guide.md     # Read file content
 
 ### Short URL
 
-`cat`, `ls`, `log` accept DocSync short URLs directly:
+Generate a short URL for any file, or paste existing short URLs into cat/ls/log:
 
 ```bash
-# These are equivalent
-docz-cli cat 闫洪康:AI-Coding技巧总结12.md
+# Generate short URL
+docz-cli shortlink 闫洪康:AI-Coding技巧总结12.md
+# → https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c
+
+# Short URLs work with cat, ls, log
 docz-cli cat https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c
-
-# List space root via slug
 docz-cli ls https://docz.zhenguanyu.com/s/yanfa
-
-# File history via short URL
 docz-cli log https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c
 ```
 
@@ -239,6 +239,7 @@ Add to your MCP settings:
 | `docz_share_read` | Read shared file by token |
 | `docz_share_info` | View share link info |
 | `docz_share_delete` | Delete share link |
+| `docz_shortlink` | Get short URL for file |
 | `docz_diff` | View file or space diff |
 
 ## AI Agent Skill
@@ -273,6 +274,7 @@ docz-cli wraps the DocSync REST API:
 | `share cat` | `GET /api/share/{token}` |
 | `share info` | `GET /api/share/{token}/info` |
 | `share rm` | `DELETE /api/spaces/{id}/share-links/{linkId}` |
+| `shortlink` | `GET /api/spaces/{id}/file-ref?path=` |
 | Short URL resolve | `GET /api/spaces/by-slug/{slug}` + `GET /api/file-refs/{fileId}` |
 
 Auth: `Authorization: Bearer <token>`. Backend is Git — every write is a commit.
