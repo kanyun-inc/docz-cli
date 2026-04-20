@@ -239,6 +239,18 @@ export async function startMcpServer(): Promise<void> {
         },
       },
       {
+        name: 'docz_shortlink',
+        description: '获取文件的短链接 URL，可直接在浏览器打开',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            space: { type: 'string', description: 'Space 名称或 ID' },
+            path: { type: 'string', description: '文件路径' },
+          },
+          required: ['space', 'path'],
+        },
+      },
+      {
         name: 'docz_diff',
         description: '查看文件或 Space 的变更 diff',
         inputSchema: {
@@ -361,6 +373,12 @@ export async function startMcpServer(): Promise<void> {
           const sid = await resolveSpaceId(client, String(args.space));
           await client.deleteShareLink(sid, String(args.linkId));
           return ok(`已删除分享链接: ${args.linkId}`);
+        }
+
+        case 'docz_shortlink': {
+          const sid = await resolveSpaceId(client, String(args.space));
+          const ref = await client.getFileRef(sid, String(args.path));
+          return ok(ref.url);
         }
 
         case 'docz_diff': {

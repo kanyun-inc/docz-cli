@@ -495,6 +495,24 @@ export function registerCommands(program: Command): void {
       console.log(`Deleted share link: ${linkId}`);
     });
 
+  // --- shortlink ---
+  program
+    .command('shortlink')
+    .description('Get short URL — docz shortlink <space>:<path> or <url>')
+    .argument('<target...>')
+    .action(async (args: string[]) => {
+      const client = getClient();
+      const { spaceId, path } = await resolveTarget(client, args);
+      if (!path) {
+        console.error(
+          'Error: file path is required. Usage: docz shortlink <space>:<path>'
+        );
+        process.exit(1);
+      }
+      const ref = await client.getFileRef(spaceId, path);
+      console.log(ref.url);
+    });
+
   // --- diff ---
   program
     .command('diff')

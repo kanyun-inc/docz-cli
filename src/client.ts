@@ -289,6 +289,16 @@ export class DocSyncClient {
     return this.request(`/api/spaces/${spaceId}/diff?${params}`);
   }
 
+  // --- File Ref ---
+  async getFileRef(
+    spaceId: string,
+    path: string
+  ): Promise<{ id: string; space_id: string; slug: string; path: string; is_dir: boolean; url: string }> {
+    return this.request(
+      `/api/spaces/${spaceId}/file-ref?path=${encodeURIComponent(path)}`
+    );
+  }
+
   // --- Resolve short URLs ---
   async resolveBySlug(slug: string): Promise<Space> {
     return this.request(`/api/spaces/by-slug/${encodeURIComponent(slug)}`);
