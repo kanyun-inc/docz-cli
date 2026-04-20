@@ -9,7 +9,7 @@ tags:
   - file-sync
   - knowledge
 user-invocable: true
-argument-hint: "spaces | ls <space> | cat <space>:<path> | share list <space> | diff <space>:<path> <commit>"
+argument-hint: "spaces | ls <space> | cat <space>:<path> | shortlink <space>:<path> | share list <space> | diff <space>:<path> <commit>"
 allowed-tools: Bash(*)
 ---
 
@@ -60,7 +60,8 @@ npx docz-cli@latest upload <local-file> <space>[:<dir>]   # upload file
 npx docz-cli@latest mkdir <space>:<path>                  # create folder
 npx docz-cli@latest mv <space>:<from> <to>                # rename/move
 npx docz-cli@latest rm <space>:<path>                     # delete (30-day trash)
-npx docz-cli@latest log <space>[:<path>]                  # change history
+npx docz-cli@latest log <space>[:<path>]                   # change history
+npx docz-cli@latest shortlink <space>:<path>              # get short URL
 npx docz-cli@latest trash <space>                         # view deleted files
 npx docz-cli@latest diff <space>[:<path>] <commit> [<from>]  # view changes
 ```
@@ -141,6 +142,7 @@ done | npx docz-cli@latest write 研发:full-report.md -
 - `rm` moves to trash (recoverable for 30 days), not permanent delete.
 - `mv` renames/moves within the same space.
 - Backend is Git: every write creates a commit. Use `log` to see history, `diff` to see changes.
+- After writing a file, use `shortlink` to get a clickable URL for the user.
 - Text files (.md, .csv, .html) work with `cat`. Binary files (images, PDF) use `upload` only.
 - Short URLs (`/s/slug/f/fileId`) can be pasted directly into `cat`, `ls`, `log`.
 - Share links let you share files with specific users or publicly, with optional expiry.
