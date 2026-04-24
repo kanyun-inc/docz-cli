@@ -143,6 +143,55 @@ export interface CommentReply {
 }
 
 // ---------------------------------------------------------------------------
+// Markdown → plain text (matches browser DOM textContent for offset calculation)
+// ---------------------------------------------------------------------------
+
+/**
+ * Strip Markdown formatting to produce text equivalent to what the browser's
+ * DOM textContent would be after rendering via ReactMarkdown.
+ *
+ * This is used to compute startOffset/endOffset in target_selector so that
+ * the Web frontend's CommentHighlighter can accurately locate the selection.
+ */
+export function stripMarkdownToText(md: string): string {
+  const lines = md.split('\n');
+  const result: string[] = [];
+  let inCodeBlock = false;
+
+  for (const line of lines) {
+    if (/^```/.test(line)) {
+      if (!inCodeBlock) {
+        inCodeBlock = true;
+        continue;
+      }
+      inCodeBlock = false;
+      continue;
+    }
+    if (inCodeBlock) {
+      result.push(line);
+      continue;
+    }
+
+    if (/^[-*_]{3,}\s*$/.test(line)) continue;
+
+    let stripped = line;
+    stripped = stripped.replace(/^#{1,6}\s+/, '');
+    stripped = stripped.replace(/^>\s?/g, '');
+    stripped = stripped.replace(/!\[([^\]]*)\]\([^)]*\)/g, '');
+    stripped = stripped.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
+    stripped = stripped.replace(/\*\*(.+?)\*\*/g, '$1');
+    stripped = stripped.replace(/__(.+?)__/g, '$1');
+    stripped = stripped.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '$1');
+    stripped = stripped.replace(/(?<!_)_(?!_)(.+?)(?<!_)_(?!_)/g, '$1');
+    stripped = stripped.replace(/~~(.+?)~~/g, '$1');
+    stripped = stripped.replace(/`([^`]+)`/g, '$1');
+    stripped = stripped.replace(/<[^>]+>/g, '');
+    result.push(stripped);
+  }
+  return result.join('\n');
+}
+
+// ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
 
@@ -365,13 +414,48 @@ export class DocSyncClient {
   async createComment(
     spaceId: string,
     filePath: string,
-    content: string
+    content: string,
+    opts?: { quote?: string; targetSelector?: string }
   ): Promise<Comment> {
+    const body: Record<string, string> = { file_path: filePath, content };
+    if (opts?.quote) {
+      body.comment_type = 'text';
+      body.target_type = 'selection';
+      body.target_content = opts.quote;
+      if (opts.targetSelector) {
+        body.target_selector = opts.targetSelector;
+      }
+    }
     return this.request(`/api/spaces/${spaceId}/comments`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ file_path: filePath, content }),
+      body: JSON.stringify(body),
     });
+  }
+
+  buildTargetSelector(
+    fileContent: string,
+    quote: string,
+    nth = 1
+  ): string {
+    let idx = -1;
+    let fromIndex = 0;
+    for (let i = 0; i < nth; i++) {
+      idx = fileContent.indexOf(quote, fromIndex);
+      if (idx === -1) break;
+      fromIndex = idx + 1;
+    }
+    const startOffset = idx >= 0 ? idx : 0;
+    const endOffset = idx >= 0 ? idx + quote.length : 0;
+    const prefix = fileContent.substring(
+      Math.max(0, startOffset - 32),
+      startOffset
+    );
+    const suffix = fileContent.substring(
+      endOffset,
+      Math.min(fileContent.length, endOffset + 32)
+    );
+    return JSON.stringify({ startOffset, endOffset, text: quote, prefix, suffix });
   }
 
   async replyComment(

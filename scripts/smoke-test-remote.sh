@@ -188,6 +188,27 @@ else
   fail "comment add: $COMMENT_RESP"
 fi
 
+# ── 12b. comment add with quote + target_selector (selection comment) ──
+echo ""
+echo "── 12b. comment add with quote + target_selector ──"
+SELECTOR_JSON='{"startOffset":14,"endOffset":28,"text":"Edited content","prefix":"Smoke Test v2\\n\\n","suffix":"."}'
+QCOMMENT_RESP=$(rcurl "$BASE/api/spaces/$SPACE_ID/comments -X POST $AUTH -H 'Content-Type: application/json' -d '{\"file_path\":\"$TEST_FILE\",\"content\":\"this is inaccurate\",\"comment_type\":\"text\",\"target_type\":\"selection\",\"target_content\":\"Edited content\",\"target_selector\":\"{\\\"startOffset\\\":14,\\\"endOffset\\\":28,\\\"text\\\":\\\"Edited content\\\",\\\"prefix\\\":\\\"Smoke Test v2\\\\n\\\\n\\\",\\\"suffix\\\":\\\".\\\"}\"}'" )
+QCOMMENT_ID=$(echo "$QCOMMENT_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null) || QCOMMENT_ID=""
+QCOMMENT_TC=$(echo "$QCOMMENT_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('target_content',''))" 2>/dev/null) || QCOMMENT_TC=""
+QCOMMENT_TS=$(echo "$QCOMMENT_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('target_selector',''))" 2>/dev/null) || QCOMMENT_TS=""
+if [ -n "$QCOMMENT_ID" ] && [ "$QCOMMENT_TC" = "Edited content" ]; then
+  ok "comment add with quote: id=$QCOMMENT_ID, target_content=$QCOMMENT_TC"
+else
+  fail "comment add with quote: $QCOMMENT_RESP"
+fi
+
+# ── 12c. verify target_selector stored correctly ──
+if echo "$QCOMMENT_TS" | python3 -c "import sys,json; s=json.load(sys.stdin); assert s['startOffset']==14 and s['endOffset']==28 and s['text']=='Edited content'" 2>/dev/null; then
+  ok "target_selector: offsets correct (14-28)"
+else
+  fail "target_selector: unexpected value: $QCOMMENT_TS"
+fi
+
 # ── 13. comment list ──
 echo ""
 echo "── 13. comment list ──"
@@ -196,6 +217,26 @@ if echo "$COMMENTS" | grep -q "smoke test comment"; then
   ok "comment list: shows our comment"
 else
   fail "comment list: $COMMENTS"
+fi
+
+# ── 13b. comment list shows selection comment fields ──
+if echo "$COMMENTS" | grep -q "Edited content"; then
+  ok "comment list: shows target_content"
+else
+  fail "comment list: missing target_content"
+fi
+LISTED_TS=$(echo "$COMMENTS" | python3 -c "
+import sys, json
+cs = json.load(sys.stdin)
+for c in cs:
+    if c.get('target_content') == 'Edited content':
+        print(c.get('target_selector', ''))
+        break
+" 2>/dev/null) || LISTED_TS=""
+if echo "$LISTED_TS" | python3 -c "import sys,json; s=json.load(sys.stdin); assert s['startOffset']==14" 2>/dev/null; then
+  ok "comment list: target_selector preserved"
+else
+  fail "comment list: target_selector missing or wrong: $LISTED_TS"
 fi
 
 # ── 14. comment reply ──
@@ -232,6 +273,18 @@ if [ -n "$COMMENT_ID" ]; then
     ok "comment delete"
   else
     fail "comment delete: status=$DEL_STATUS"
+  fi
+fi
+
+# ── 16b. delete quote comment ──
+if [ -n "$QCOMMENT_ID" ]; then
+  echo ""
+  echo "── 16b. delete quote comment ──"
+  QDEL_STATUS=$(rcurl_status "$BASE/api/spaces/$SPACE_ID/comments/$QCOMMENT_ID -X DELETE $AUTH")
+  if [ "$QDEL_STATUS" = "200" ] || [ "$QDEL_STATUS" = "204" ]; then
+    ok "delete quote comment"
+  else
+    fail "delete quote comment: status=$QDEL_STATUS"
   fi
 fi
 
