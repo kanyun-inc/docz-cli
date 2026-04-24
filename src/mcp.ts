@@ -299,10 +299,10 @@ export async function startMcpServer(): Promise<void> {
               description:
                 '引用的原文内容（划线评论）。从文件中复制要评论的文字片段',
             },
-            quote_offset: {
+            quote_nth: {
               type: 'number',
               description:
-                '引用文字在文件中的字符偏移位置（可选，不传则自动匹配第一次出现）',
+                '匹配第几次出现的引用文字（默认 1，即第一次出现）',
             },
           },
           required: ['space', 'path', 'content'],
@@ -629,13 +629,13 @@ export async function startMcpServer(): Promise<void> {
           const sid = await resolveSpaceId(client, String(args.space));
           const commentPath = String(args.path);
           const quote = args.quote ? String(args.quote) : undefined;
-          const quoteOffset = args.quote_offset != null ? Number(args.quote_offset) : undefined;
+          const quoteNth = args.quote_nth != null ? Number(args.quote_nth) : undefined;
           let targetSelector: string | undefined;
           if (quote) {
             const fileContent = await client.cat(sid, commentPath);
             const isMarkdown = /\.(?:md|markdown|mdx)$/i.test(commentPath);
             const searchContent = isMarkdown ? stripMarkdownToText(fileContent) : fileContent;
-            targetSelector = client.buildTargetSelector(searchContent, quote, quoteOffset);
+            targetSelector = client.buildTargetSelector(searchContent, quote, quoteNth);
           }
           const c = await client.createComment(
             sid,

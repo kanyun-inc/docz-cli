@@ -526,9 +526,9 @@ describe('DocSyncClient', () => {
     expect(selector.suffix).toBe(' a test document.');
   });
 
-  it('buildTargetSelector() with explicit offset', () => {
+  it('buildTargetSelector() with nth=2 finds second occurrence', () => {
     const content = 'foo bar foo bar';
-    const selector = JSON.parse(c.buildTargetSelector(content, 'foo', 8));
+    const selector = JSON.parse(c.buildTargetSelector(content, 'foo', 2));
     expect(selector.startOffset).toBe(8);
     expect(selector.endOffset).toBe(11);
     expect(selector.text).toBe('foo');
@@ -536,11 +536,18 @@ describe('DocSyncClient', () => {
     expect(selector.suffix).toBe(' bar');
   });
 
-  it('buildTargetSelector() without offset finds first occurrence', () => {
+  it('buildTargetSelector() default nth=1 finds first occurrence', () => {
     const content = 'foo bar foo bar';
     const selector = JSON.parse(c.buildTargetSelector(content, 'foo'));
     expect(selector.startOffset).toBe(0);
     expect(selector.endOffset).toBe(3);
+  });
+
+  it('buildTargetSelector() nth exceeding occurrences falls back to 0', () => {
+    const content = 'foo bar';
+    const selector = JSON.parse(c.buildTargetSelector(content, 'foo', 3));
+    expect(selector.startOffset).toBe(0);
+    expect(selector.endOffset).toBe(0);
   });
 
   it('buildTargetSelector() handles quote not found', () => {

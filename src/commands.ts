@@ -498,8 +498,8 @@ export function registerCommands(program: Command): void {
     .argument('<target>', 'space:path')
     .argument('<content>', 'Comment text (or - for stdin)')
     .option('--quote <text>', 'Quoted text (selection comment)')
-    .option('--offset <n>', 'Character offset of quoted text in file', Number)
-    .action(async (target: string, content: string, opts: { quote?: string; offset?: number }) => {
+    .option('--nth <n>', 'Match Nth occurrence of quoted text (default: 1)', Number)
+    .action(async (target: string, content: string, opts: { quote?: string; nth?: number }) => {
       const { space, path } = parseTarget([target]);
       if (!path) {
         console.error('Error: file path is required.');
@@ -513,7 +513,7 @@ export function registerCommands(program: Command): void {
         const fileContent = await client.cat(s.id, path);
         const isMarkdown = /\.(?:md|markdown|mdx)$/i.test(path);
         const searchContent = isMarkdown ? stripMarkdownToText(fileContent) : fileContent;
-        targetSelector = client.buildTargetSelector(searchContent, opts.quote, opts.offset);
+        targetSelector = client.buildTargetSelector(searchContent, opts.quote, opts.nth);
       }
       const c = await client.createComment(s.id, path, body, {
         quote: opts.quote,

@@ -436,9 +436,15 @@ export class DocSyncClient {
   buildTargetSelector(
     fileContent: string,
     quote: string,
-    offset?: number
+    nth = 1
   ): string {
-    const idx = offset != null ? offset : fileContent.indexOf(quote);
+    let idx = -1;
+    let fromIndex = 0;
+    for (let i = 0; i < nth; i++) {
+      idx = fileContent.indexOf(quote, fromIndex);
+      if (idx === -1) break;
+      fromIndex = idx + 1;
+    }
     const startOffset = idx >= 0 ? idx : 0;
     const endOffset = idx >= 0 ? idx + quote.length : 0;
     const prefix = fileContent.substring(
