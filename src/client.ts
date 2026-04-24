@@ -143,6 +143,55 @@ export interface CommentReply {
 }
 
 // ---------------------------------------------------------------------------
+// Markdown → plain text (matches browser DOM textContent for offset calculation)
+// ---------------------------------------------------------------------------
+
+/**
+ * Strip Markdown formatting to produce text equivalent to what the browser's
+ * DOM textContent would be after rendering via ReactMarkdown.
+ *
+ * This is used to compute startOffset/endOffset in target_selector so that
+ * the Web frontend's CommentHighlighter can accurately locate the selection.
+ */
+export function stripMarkdownToText(md: string): string {
+  const lines = md.split('\n');
+  const result: string[] = [];
+  let inCodeBlock = false;
+
+  for (const line of lines) {
+    if (/^```/.test(line)) {
+      if (!inCodeBlock) {
+        inCodeBlock = true;
+        continue;
+      }
+      inCodeBlock = false;
+      continue;
+    }
+    if (inCodeBlock) {
+      result.push(line);
+      continue;
+    }
+
+    if (/^[-*_]{3,}\s*$/.test(line)) continue;
+
+    let stripped = line;
+    stripped = stripped.replace(/^#{1,6}\s+/, '');
+    stripped = stripped.replace(/^>\s?/g, '');
+    stripped = stripped.replace(/!\[([^\]]*)\]\([^)]*\)/g, '');
+    stripped = stripped.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
+    stripped = stripped.replace(/\*\*(.+?)\*\*/g, '$1');
+    stripped = stripped.replace(/__(.+?)__/g, '$1');
+    stripped = stripped.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '$1');
+    stripped = stripped.replace(/(?<!_)_(?!_)(.+?)(?<!_)_(?!_)/g, '$1');
+    stripped = stripped.replace(/~~(.+?)~~/g, '$1');
+    stripped = stripped.replace(/`([^`]+)`/g, '$1');
+    stripped = stripped.replace(/<[^>]+>/g, '');
+    result.push(stripped);
+  }
+  return result.join('\n');
+}
+
+// ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
 

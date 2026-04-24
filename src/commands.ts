@@ -5,7 +5,7 @@
 import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import type { Command } from 'commander';
-import { ConflictError, DocSyncClient } from './client.js';
+import { ConflictError, DocSyncClient, stripMarkdownToText } from './client.js';
 import { getBaseUrl, getConfigPath, getToken, saveConfig } from './config.js';
 
 // ---------------------------------------------------------------------------
@@ -511,7 +511,9 @@ export function registerCommands(program: Command): void {
       let targetSelector: string | undefined;
       if (opts.quote) {
         const fileContent = await client.cat(s.id, path);
-        targetSelector = client.buildTargetSelector(fileContent, opts.quote, opts.offset);
+        const isMarkdown = /\.(?:md|markdown|mdx)$/i.test(path);
+        const searchContent = isMarkdown ? stripMarkdownToText(fileContent) : fileContent;
+        targetSelector = client.buildTargetSelector(searchContent, opts.quote, opts.offset);
       }
       const c = await client.createComment(s.id, path, body, {
         quote: opts.quote,

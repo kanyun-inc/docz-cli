@@ -15,7 +15,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { ConflictError, DocSyncClient } from './client.js';
+import { ConflictError, DocSyncClient, stripMarkdownToText } from './client.js';
 import { parseExpires } from './commands.js';
 import { getBaseUrl, getToken } from './config.js';
 
@@ -633,7 +633,9 @@ export async function startMcpServer(): Promise<void> {
           let targetSelector: string | undefined;
           if (quote) {
             const fileContent = await client.cat(sid, commentPath);
-            targetSelector = client.buildTargetSelector(fileContent, quote, quoteOffset);
+            const isMarkdown = /\.(?:md|markdown|mdx)$/i.test(commentPath);
+            const searchContent = isMarkdown ? stripMarkdownToText(fileContent) : fileContent;
+            targetSelector = client.buildTargetSelector(searchContent, quote, quoteOffset);
           }
           const c = await client.createComment(
             sid,
