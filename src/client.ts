@@ -218,10 +218,8 @@ export class DocSyncClient {
     );
   }
 
-  async treeFull(spaceId: string, path = ''): Promise<TreeEntry[]> {
-    return this.request(
-      `/api/spaces/${spaceId}/tree/full?path=${encodeURIComponent(path)}`
-    );
+  async treeFull(spaceId: string): Promise<TreeEntry[]> {
+    return this.request(`/api/spaces/${spaceId}/tree/full`);
   }
 
   // --- Blob ---

@@ -210,7 +210,7 @@ export function registerCommands(program: Command): void {
       const client = getClient();
       const { spaceId, path } = await resolveTarget(client, args);
       const entries = opts.recursive
-        ? await client.treeFull(spaceId, path)
+        ? await client.treeFull(spaceId)
         : await client.ls(spaceId, path);
       if (entries.length === 0) {
         console.log('(empty)');

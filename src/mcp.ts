@@ -15,7 +15,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { DocSyncClient } from './client.js';
+import { ConflictError, DocSyncClient } from './client.js';
 import { parseExpires } from './commands.js';
 import { getBaseUrl, getToken } from './config.js';
 
@@ -99,7 +99,7 @@ export async function startMcpServer(): Promise<void> {
       {
         name: 'docz_read_file',
         description:
-          '读取 DocSync 文件内容（Markdown、CSV、HTML 等文本文件）。返回内容和 ref（用于安全写入）',
+          '读取 DocSync 文件内容（Markdown、CSV、HTML 等文本文件）。返回格式：第一行 [ref: <commit_hash>]，空行后是文件内容。保存时请将 ref 值作为 base_ref 传入 docz_save_file 以检测冲突',
         inputSchema: {
           type: 'object' as const,
           properties: {
@@ -493,7 +493,7 @@ export async function startMcpServer(): Promise<void> {
         case 'docz_list_files': {
           const sid = await resolveSpaceId(client, String(args.space));
           const entries = args.recursive
-            ? await client.treeFull(sid, String(args.path ?? ''))
+            ? await client.treeFull(sid)
             : await client.ls(sid, String(args.path ?? ''));
           if (entries.length === 0) return ok('（空目录）');
           const lines = entries.map((e) => {
@@ -517,11 +517,24 @@ export async function startMcpServer(): Promise<void> {
           const saveMessage = args.message ? String(args.message) : undefined;
           const baseRef = args.base_ref ? String(args.base_ref) : undefined;
 
-          const result = await client.save(sid, savePath, saveContent, {
-            baseRef,
-            message: saveMessage,
-          });
-          return ok(`已保存: ${result.path} (ref: ${result.ref})`);
+          if (Buffer.byteLength(saveContent, 'utf-8') > 2 * 1024 * 1024) {
+            return fail('内容超过 2MB 限制，请使用 docz_upload_file 上传');
+          }
+
+          try {
+            const result = await client.save(sid, savePath, saveContent, {
+              baseRef,
+              message: saveMessage,
+            });
+            return ok(`已保存: ${result.path} (ref: ${result.ref})`);
+          } catch (err) {
+            if (err instanceof ConflictError) {
+              return fail(
+                `冲突：文件已被他人修改（当前 ref: ${err.detail.current_ref}）。请先用 docz_read_file 获取最新内容，重新修改后再保存。`
+              );
+            }
+            throw err;
+          }
         }
 
         case 'docz_upload_file': {
