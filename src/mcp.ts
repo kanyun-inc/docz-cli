@@ -280,7 +280,8 @@ export async function startMcpServer(): Promise<void> {
       },
       {
         name: 'docz_add_comment',
-        description: '在文件上添加评论。支持 @email 格式提及其他用户',
+        description:
+          '在文件上添加评论。支持 @email 格式提及其他用户。可通过 quote 引用文件中的原文（划线评论），引用内容会在 Web UI 高亮显示',
         inputSchema: {
           type: 'object' as const,
           properties: {
@@ -292,6 +293,16 @@ export async function startMcpServer(): Promise<void> {
             content: {
               type: 'string',
               description: '评论内容',
+            },
+            quote: {
+              type: 'string',
+              description:
+                '引用的原文内容（划线评论）。从文件中复制要评论的文字片段',
+            },
+            quote_offset: {
+              type: 'number',
+              description:
+                '引用文字在文件中的字符偏移位置（可选，不传则自动匹配第一次出现）',
             },
           },
           required: ['space', 'path', 'content'],
@@ -602,7 +613,10 @@ export async function startMcpServer(): Promise<void> {
           if (comments.length === 0) return ok('没有评论。');
           const lines = comments.map((c) => {
             const status = c.is_closed ? ' [已关闭]' : '';
-            let text = `#${c.id} ${c.user_name}${status}: ${c.content}`;
+            const quote = c.target_content
+              ? `\n  > ${c.target_content}`
+              : '';
+            let text = `#${c.id} ${c.user_name}${status}:${quote}\n  ${c.content}`;
             for (const r of c.replies) {
               text += `\n  ↳ ${r.user_name}: ${r.content}`;
             }
@@ -613,10 +627,19 @@ export async function startMcpServer(): Promise<void> {
 
         case 'docz_add_comment': {
           const sid = await resolveSpaceId(client, String(args.space));
+          const commentPath = String(args.path);
+          const quote = args.quote ? String(args.quote) : undefined;
+          const quoteOffset = args.quote_offset != null ? Number(args.quote_offset) : undefined;
+          let targetSelector: string | undefined;
+          if (quote) {
+            const fileContent = await client.cat(sid, commentPath);
+            targetSelector = client.buildTargetSelector(fileContent, quote, quoteOffset);
+          }
           const c = await client.createComment(
             sid,
-            String(args.path),
-            String(args.content)
+            commentPath,
+            String(args.content),
+            { quote, targetSelector }
           );
           return ok(`评论 #${c.id} 已创建`);
         }

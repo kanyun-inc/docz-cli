@@ -188,6 +188,18 @@ else
   fail "comment add: $COMMENT_RESP"
 fi
 
+# ── 12b. comment add with quote (selection comment) ──
+echo ""
+echo "── 12b. comment add with quote (selection comment) ──"
+QCOMMENT_RESP=$(rcurl "$BASE/api/spaces/$SPACE_ID/comments -X POST $AUTH -H 'Content-Type: application/json' -d '{\"file_path\":\"$TEST_FILE\",\"content\":\"this is inaccurate\",\"comment_type\":\"text\",\"target_type\":\"selection\",\"target_content\":\"Smoke Test v2\"}'")
+QCOMMENT_ID=$(echo "$QCOMMENT_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null) || QCOMMENT_ID=""
+QCOMMENT_TC=$(echo "$QCOMMENT_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('target_content',''))" 2>/dev/null) || QCOMMENT_TC=""
+if [ -n "$QCOMMENT_ID" ] && [ "$QCOMMENT_TC" = "Smoke Test v2" ]; then
+  ok "comment add with quote: id=$QCOMMENT_ID, target_content=$QCOMMENT_TC"
+else
+  fail "comment add with quote: $QCOMMENT_RESP"
+fi
+
 # ── 13. comment list ──
 echo ""
 echo "── 13. comment list ──"
@@ -196,6 +208,13 @@ if echo "$COMMENTS" | grep -q "smoke test comment"; then
   ok "comment list: shows our comment"
 else
   fail "comment list: $COMMENTS"
+fi
+
+# ── 13b. comment list shows quote ──
+if echo "$COMMENTS" | grep -q "Smoke Test v2"; then
+  ok "comment list: shows quoted content"
+else
+  fail "comment list: missing target_content"
 fi
 
 # ── 14. comment reply ──
@@ -232,6 +251,18 @@ if [ -n "$COMMENT_ID" ]; then
     ok "comment delete"
   else
     fail "comment delete: status=$DEL_STATUS"
+  fi
+fi
+
+# ── 16b. delete quote comment ──
+if [ -n "$QCOMMENT_ID" ]; then
+  echo ""
+  echo "── 16b. delete quote comment ──"
+  QDEL_STATUS=$(rcurl_status "$BASE/api/spaces/$SPACE_ID/comments/$QCOMMENT_ID -X DELETE $AUTH")
+  if [ "$QDEL_STATUS" = "200" ] || [ "$QDEL_STATUS" = "204" ]; then
+    ok "delete quote comment"
+  else
+    fail "delete quote comment: status=$QDEL_STATUS"
   fi
 fi
 

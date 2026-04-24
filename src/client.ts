@@ -365,13 +365,42 @@ export class DocSyncClient {
   async createComment(
     spaceId: string,
     filePath: string,
-    content: string
+    content: string,
+    opts?: { quote?: string; targetSelector?: string }
   ): Promise<Comment> {
+    const body: Record<string, string> = { file_path: filePath, content };
+    if (opts?.quote) {
+      body.comment_type = 'text';
+      body.target_type = 'selection';
+      body.target_content = opts.quote;
+      if (opts.targetSelector) {
+        body.target_selector = opts.targetSelector;
+      }
+    }
     return this.request(`/api/spaces/${spaceId}/comments`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ file_path: filePath, content }),
+      body: JSON.stringify(body),
     });
+  }
+
+  buildTargetSelector(
+    fileContent: string,
+    quote: string,
+    offset?: number
+  ): string {
+    const idx = offset != null ? offset : fileContent.indexOf(quote);
+    const startOffset = idx >= 0 ? idx : 0;
+    const endOffset = idx >= 0 ? idx + quote.length : 0;
+    const prefix = fileContent.substring(
+      Math.max(0, startOffset - 32),
+      startOffset
+    );
+    const suffix = fileContent.substring(
+      endOffset,
+      Math.min(fileContent.length, endOffset + 32)
+    );
+    return JSON.stringify({ startOffset, endOffset, text: quote, prefix, suffix });
   }
 
   async replyComment(

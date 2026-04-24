@@ -226,6 +226,10 @@ const server = setupServer(
         id: 43,
         file_path: body.file_path,
         content: body.content,
+        comment_type: body.comment_type || 'text',
+        target_type: body.target_type || 'selection',
+        target_selector: body.target_selector || '',
+        target_content: body.target_content || '',
         replies: [],
       },
       { status: 201 }
@@ -494,6 +498,57 @@ describe('DocSyncClient', () => {
     expect(comment.id).toBe(43);
     expect(comment.content).toBe('这里有个问题');
     expect(comment.file_path).toBe('README.md');
+  });
+
+  it('createComment() with quote creates selection comment', async () => {
+    const fileContent = '# Hello\nTest file.';
+    const quote = 'Test file';
+    const selector = c.buildTargetSelector(fileContent, quote);
+    const comment = await c.createComment(
+      SID,
+      'README.md',
+      '这段描述不准确',
+      { quote, targetSelector: selector }
+    );
+    expect(comment.id).toBe(43);
+    expect(comment.target_content).toBe('Test file');
+    expect(comment.comment_type).toBe('text');
+    expect(comment.target_type).toBe('selection');
+  });
+
+  it('buildTargetSelector() computes correct offsets', () => {
+    const content = 'Hello World, this is a test document.';
+    const selector = JSON.parse(c.buildTargetSelector(content, 'this is'));
+    expect(selector.startOffset).toBe(13);
+    expect(selector.endOffset).toBe(20);
+    expect(selector.text).toBe('this is');
+    expect(selector.prefix).toBe('Hello World, ');
+    expect(selector.suffix).toBe(' a test document.');
+  });
+
+  it('buildTargetSelector() with explicit offset', () => {
+    const content = 'foo bar foo bar';
+    const selector = JSON.parse(c.buildTargetSelector(content, 'foo', 8));
+    expect(selector.startOffset).toBe(8);
+    expect(selector.endOffset).toBe(11);
+    expect(selector.text).toBe('foo');
+    expect(selector.prefix).toBe('foo bar ');
+    expect(selector.suffix).toBe(' bar');
+  });
+
+  it('buildTargetSelector() without offset finds first occurrence', () => {
+    const content = 'foo bar foo bar';
+    const selector = JSON.parse(c.buildTargetSelector(content, 'foo'));
+    expect(selector.startOffset).toBe(0);
+    expect(selector.endOffset).toBe(3);
+  });
+
+  it('buildTargetSelector() handles quote not found', () => {
+    const content = 'Hello World';
+    const selector = JSON.parse(c.buildTargetSelector(content, 'missing'));
+    expect(selector.startOffset).toBe(0);
+    expect(selector.endOffset).toBe(0);
+    expect(selector.text).toBe('missing');
   });
 
   it('replyComment() returns new reply', async () => {

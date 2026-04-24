@@ -482,6 +482,9 @@ export function registerCommands(program: Command): void {
       for (const c of comments) {
         const status = c.is_closed ? ' [closed]' : '';
         console.log(`#${c.id} ${c.user_name} (${c.created_at})${status}`);
+        if (c.target_content) {
+          console.log(`  > ${c.target_content}`);
+        }
         console.log(`  ${c.content}`);
         for (const r of c.replies) {
           console.log(`    → ${r.user_name}: ${r.content}`);
@@ -494,7 +497,9 @@ export function registerCommands(program: Command): void {
     .description('Add comment — docz comment add <space>:<path> <content>')
     .argument('<target>', 'space:path')
     .argument('<content>', 'Comment text (or - for stdin)')
-    .action(async (target: string, content: string) => {
+    .option('--quote <text>', 'Quoted text (selection comment)')
+    .option('--offset <n>', 'Character offset of quoted text in file', Number)
+    .action(async (target: string, content: string, opts: { quote?: string; offset?: number }) => {
       const { space, path } = parseTarget([target]);
       if (!path) {
         console.error('Error: file path is required.');
@@ -503,7 +508,15 @@ export function registerCommands(program: Command): void {
       const client = getClient();
       const s = await client.resolveSpace(space);
       const body = content === '-' ? await readStdin() : content;
-      const c = await client.createComment(s.id, path, body);
+      let targetSelector: string | undefined;
+      if (opts.quote) {
+        const fileContent = await client.cat(s.id, path);
+        targetSelector = client.buildTargetSelector(fileContent, opts.quote, opts.offset);
+      }
+      const c = await client.createComment(s.id, path, body, {
+        quote: opts.quote,
+        targetSelector,
+      });
       console.log(`Comment #${c.id} created.`);
     });
 
