@@ -97,6 +97,64 @@ export interface FileRef {
   path: string;
 }
 
+export interface CatResult {
+  content: string;
+  ref: string;
+}
+
+export interface SaveResult {
+  path: string;
+  ref: string;
+}
+
+export interface SaveConflict {
+  error: 'conflict';
+  current_ref: string;
+  path: string;
+}
+
+export interface Comment {
+  id: number;
+  space_id: string;
+  file_path: string;
+  comment_type: string;
+  target_type: string;
+  target_selector: string;
+  target_content: string;
+  content: string;
+  user_id: string;
+  user_name: string;
+  user_email: string;
+  is_closed: boolean;
+  created_at: string;
+  updated_at: string;
+  replies: CommentReply[];
+}
+
+export interface CommentReply {
+  id: number;
+  comment_id: number;
+  content: string;
+  user_id: string;
+  user_name: string;
+  user_email: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+export class ConflictError extends Error {
+  constructor(public readonly detail: SaveConflict) {
+    super(
+      'Conflict: file has been modified by others. Please re-read the latest content and re-apply your changes.'
+    );
+    this.name = 'ConflictError';
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Client
 // ---------------------------------------------------------------------------
@@ -160,11 +218,29 @@ export class DocSyncClient {
     );
   }
 
+  async treeFull(spaceId: string): Promise<TreeEntry[]> {
+    return this.request(`/api/spaces/${spaceId}/tree/full`);
+  }
+
   // --- Blob ---
   async cat(spaceId: string, filepath: string): Promise<string> {
     return this.request(
       `/api/spaces/${spaceId}/blob/${encodeURIComponent(filepath)}`
     );
+  }
+
+  async catWithRef(spaceId: string, filepath: string): Promise<CatResult> {
+    const res = await fetch(
+      `${this.baseUrl}/api/spaces/${spaceId}/blob/${encodeURIComponent(filepath)}`,
+      { headers: { Authorization: `Bearer ${this.token}` } }
+    );
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`${res.status} ${res.statusText}: ${body}`.trim());
+    }
+    const content = await res.text();
+    const ref = res.headers.get('X-Git-Ref') ?? '';
+    return { content, ref };
   }
 
   // --- Write ---
@@ -185,6 +261,41 @@ export class DocSyncClient {
       method: 'POST',
       body: form,
     });
+  }
+
+  async save(
+    spaceId: string,
+    path: string,
+    content: string,
+    opts?: { baseRef?: string; message?: string }
+  ): Promise<SaveResult> {
+    const body: Record<string, string> = { path, content };
+    if (opts?.baseRef) body.base_ref = opts.baseRef;
+    if (opts?.message) body.message = opts.message;
+
+    const res = await fetch(
+      `${this.baseUrl}/api/spaces/${spaceId}/files/save`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      }
+    );
+
+    if (res.status === 409) {
+      const data = (await res.json()) as SaveConflict;
+      throw new ConflictError(data);
+    }
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`${res.status} ${res.statusText}: ${text}`.trim());
+    }
+
+    return res.json() as Promise<SaveResult>;
   }
 
   async mkdir(spaceId: string, path: string): Promise<void> {
@@ -211,6 +322,18 @@ export class DocSyncClient {
     });
   }
 
+  async rollback(
+    spaceId: string,
+    filePath: string,
+    commitHash: string
+  ): Promise<void> {
+    await this.request(`/api/spaces/${spaceId}/files/rollback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file_path: filePath, commit_hash: commitHash }),
+    });
+  }
+
   // --- History ---
   async log(spaceId: string, filepath?: string): Promise<LogEntry[]> {
     const path = filepath
@@ -222,6 +345,62 @@ export class DocSyncClient {
   // --- Trash ---
   async trash(spaceId: string): Promise<TrashEntry[]> {
     return this.request(`/api/spaces/${spaceId}/trash`);
+  }
+
+  async restore(spaceId: string, path: string, commit: string): Promise<void> {
+    await this.request(`/api/spaces/${spaceId}/trash/restore`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path, commit }),
+    });
+  }
+
+  // --- Comments ---
+  async listComments(spaceId: string, filePath: string): Promise<Comment[]> {
+    return this.request(
+      `/api/spaces/${spaceId}/comments?path=${encodeURIComponent(filePath)}`
+    );
+  }
+
+  async createComment(
+    spaceId: string,
+    filePath: string,
+    content: string
+  ): Promise<Comment> {
+    return this.request(`/api/spaces/${spaceId}/comments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file_path: filePath, content }),
+    });
+  }
+
+  async replyComment(
+    spaceId: string,
+    commentId: number,
+    content: string
+  ): Promise<CommentReply> {
+    return this.request(
+      `/api/spaces/${spaceId}/comments/${commentId}/replies`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content }),
+      }
+    );
+  }
+
+  async closeComment(spaceId: string, commentId: number): Promise<Comment> {
+    return this.request(`/api/spaces/${spaceId}/comments/${commentId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_closed: true }),
+    });
+  }
+
+  async deleteComment(spaceId: string, commentId: number): Promise<void> {
+    await this.request(`/api/spaces/${spaceId}/comments/${commentId}`, {
+      method: 'DELETE',
+    });
   }
 
   // --- Share Links ---
@@ -241,7 +420,10 @@ export class DocSyncClient {
     });
   }
 
-  async listShareLinks(spaceId: string, filePath?: string): Promise<ShareLink[]> {
+  async listShareLinks(
+    spaceId: string,
+    filePath?: string
+  ): Promise<ShareLink[]> {
     const q = filePath ? `?file_path=${encodeURIComponent(filePath)}` : '';
     return this.request(`/api/spaces/${spaceId}/share-links${q}`);
   }
@@ -277,13 +459,24 @@ export class DocSyncClient {
   }
 
   // --- Diff ---
-  async diffFile(spaceId: string, filePath: string, to: string, from?: string): Promise<DiffResponse> {
+  async diffFile(
+    spaceId: string,
+    filePath: string,
+    to: string,
+    from?: string
+  ): Promise<DiffResponse> {
     const params = new URLSearchParams({ to });
     if (from) params.set('from', from);
-    return this.request(`/api/spaces/${spaceId}/diff/${encodeURIComponent(filePath)}?${params}`);
+    return this.request(
+      `/api/spaces/${spaceId}/diff/${encodeURIComponent(filePath)}?${params}`
+    );
   }
 
-  async diffSummary(spaceId: string, to: string, from?: string): Promise<DiffSummary> {
+  async diffSummary(
+    spaceId: string,
+    to: string,
+    from?: string
+  ): Promise<DiffSummary> {
     const params = new URLSearchParams({ to });
     if (from) params.set('from', from);
     return this.request(`/api/spaces/${spaceId}/diff?${params}`);
@@ -293,7 +486,14 @@ export class DocSyncClient {
   async getFileRef(
     spaceId: string,
     path: string
-  ): Promise<{ id: string; space_id: string; slug: string; path: string; is_dir: boolean; url: string }> {
+  ): Promise<{
+    id: string;
+    space_id: string;
+    slug: string;
+    path: string;
+    is_dir: boolean;
+    url: string;
+  }> {
     return this.request(
       `/api/spaces/${spaceId}/file-ref?path=${encodeURIComponent(path)}`
     );
