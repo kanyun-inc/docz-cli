@@ -3,9 +3,9 @@
  */
 
 import { readFileSync } from 'node:fs';
-import { basename, dirname } from 'node:path';
+import { basename } from 'node:path';
 import type { Command } from 'commander';
-import { DocSyncClient } from './client.js';
+import { ConflictError, DocSyncClient } from './client.js';
 import { getBaseUrl, getConfigPath, getToken, saveConfig } from './config.js';
 
 // ---------------------------------------------------------------------------
@@ -113,7 +113,10 @@ async function resolveTarget(
 /** Parse relative duration (7d, 24h, 30d) to RFC3339 */
 export function parseExpires(value: string): string {
   const match = value.match(/^(\d+)([dh])$/);
-  if (!match) throw new Error(`Invalid expires format: "${value}". Use e.g. 7d, 24h, 30d`);
+  if (!match)
+    throw new Error(
+      `Invalid expires format: "${value}". Use e.g. 7d, 24h, 30d`
+    );
   const [, num, unit] = match;
   const ms = unit === 'd' ? Number(num) * 86400000 : Number(num) * 3600000;
   return new Date(Date.now() + ms).toISOString();
@@ -125,6 +128,17 @@ function extractShareToken(input: string): string {
   if (m) return m[1];
   return input;
 }
+
+/** Read all of stdin into a string */
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks).toString('utf-8');
+}
+
+const MAX_SAVE_SIZE = 2 * 1024 * 1024; // 2MB
 
 // ---------------------------------------------------------------------------
 // Commands
@@ -149,7 +163,6 @@ export function registerCommands(program: Command): void {
         );
         process.exit(1);
       }
-      // Verify token
       const client = new DocSyncClient(url, token);
       try {
         const user = await client.me();
@@ -192,10 +205,13 @@ export function registerCommands(program: Command): void {
     .command('ls')
     .description('List files — docz ls <space>[:<path>] or <url>')
     .argument('<target...>')
-    .action(async (args: string[]) => {
+    .option('-R, --recursive', 'Recursively list all files')
+    .action(async (args: string[], opts: { recursive?: boolean }) => {
       const client = getClient();
       const { spaceId, path } = await resolveTarget(client, args);
-      const entries = await client.ls(spaceId, path);
+      const entries = opts.recursive
+        ? await client.treeFull(spaceId, path)
+        : await client.ls(spaceId, path);
       if (entries.length === 0) {
         console.log('(empty)');
         return;
@@ -214,7 +230,8 @@ export function registerCommands(program: Command): void {
     .command('cat')
     .description('Read file content — docz cat <space>:<path> or <url>')
     .argument('<target...>')
-    .action(async (args: string[]) => {
+    .option('--ref', 'Also output Git ref to stderr')
+    .action(async (args: string[], opts: { ref?: boolean }) => {
       const client = getClient();
       const { spaceId, path } = await resolveTarget(client, args);
       if (!path) {
@@ -223,8 +240,14 @@ export function registerCommands(program: Command): void {
         );
         process.exit(1);
       }
-      const content = await client.cat(spaceId, path);
-      process.stdout.write(content);
+      if (opts.ref) {
+        const result = await client.catWithRef(spaceId, path);
+        console.error(`ref: ${result.ref}`);
+        process.stdout.write(result.content);
+      } else {
+        const content = await client.cat(spaceId, path);
+        process.stdout.write(content);
+      }
     });
 
   // --- upload ---
@@ -250,37 +273,60 @@ export function registerCommands(program: Command): void {
     .description('Write content to file — docz write <space>:<path> <content>')
     .argument('<target>', 'space:dir/filename.md')
     .argument('<content>', 'File content (or - for stdin)')
-    .action(async (target: string, content: string) => {
-      const { space, path } = parseTarget([target]);
-      if (!path) {
-        console.error(
-          'Error: path is required. Usage: docz write <space>:<dir/filename> <content>'
-        );
-        process.exit(1);
-      }
-      const client = getClient();
-      const s = await client.resolveSpace(space);
-      const filename = basename(path);
-      const dir = dirname(path);
-      let body: string;
-      if (content === '-') {
-        // Read from stdin
-        const chunks: Buffer[] = [];
-        for await (const chunk of process.stdin) {
-          chunks.push(chunk as Buffer);
+    .option('--force', 'Skip conflict detection')
+    .option('-m, --message <msg>', 'Custom commit message')
+    .action(
+      async (
+        target: string,
+        content: string,
+        opts: { force?: boolean; message?: string }
+      ) => {
+        const { space, path } = parseTarget([target]);
+        if (!path) {
+          console.error(
+            'Error: path is required. Usage: docz write <space>:<dir/filename> <content>'
+          );
+          process.exit(1);
         }
-        body = Buffer.concat(chunks).toString('utf-8');
-      } else {
-        body = content;
+        const client = getClient();
+        const s = await client.resolveSpace(space);
+        const body = content === '-' ? await readStdin() : content;
+
+        if (Buffer.byteLength(body, 'utf-8') > MAX_SAVE_SIZE) {
+          console.error(
+            'Error: content exceeds 2MB limit. Use `docz upload` for large files.'
+          );
+          process.exit(1);
+        }
+
+        let baseRef: string | undefined;
+        if (!opts.force) {
+          try {
+            const existing = await client.catWithRef(s.id, path);
+            baseRef = existing.ref;
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : '';
+            if (!msg.includes('404')) throw err;
+          }
+        }
+
+        try {
+          const result = await client.save(s.id, path, body, {
+            baseRef,
+            message: opts.message,
+          });
+          console.log(`Written: ${result.path} (ref: ${result.ref})`);
+        } catch (err) {
+          if (err instanceof ConflictError) {
+            console.error(
+              'Error: file was modified by someone else. Please re-read the latest content and try again.'
+            );
+            process.exit(1);
+          }
+          throw err;
+        }
       }
-      const result = await client.upload(
-        s.id,
-        dir === '.' ? '' : dir,
-        filename,
-        body
-      );
-      console.log(`Written: ${result.path}`);
-    });
+    );
 
   // --- mkdir ---
   program
@@ -352,6 +398,26 @@ export function registerCommands(program: Command): void {
       }
     });
 
+  // --- rollback ---
+  program
+    .command('rollback')
+    .description(
+      'Rollback file to a previous version — docz rollback <space>:<path> <commit>'
+    )
+    .argument('<target>', 'space:path')
+    .argument('<commit>', 'Commit hash to rollback to')
+    .action(async (target: string, commit: string) => {
+      const { space, path } = parseTarget([target]);
+      if (!path) {
+        console.error('Error: file path is required.');
+        process.exit(1);
+      }
+      const client = getClient();
+      const s = await client.resolveSpace(space);
+      await client.rollback(s.id, path, commit);
+      console.log(`Rolled back: ${path} → ${commit.substring(0, 7)}`);
+    });
+
   // --- trash ---
   program
     .command('trash')
@@ -372,6 +438,115 @@ export function registerCommands(program: Command): void {
       }
     });
 
+  // --- restore ---
+  program
+    .command('restore')
+    .description(
+      'Restore file from trash — docz restore <space>:<path> <commit>'
+    )
+    .argument('<target>', 'space:path')
+    .argument('<commit>', 'Commit hash from trash listing')
+    .action(async (target: string, commit: string) => {
+      const { space, path } = parseTarget([target]);
+      if (!path) {
+        console.error('Error: path is required.');
+        process.exit(1);
+      }
+      const client = getClient();
+      const s = await client.resolveSpace(space);
+      await client.restore(s.id, path, commit);
+      console.log(`Restored: ${path}`);
+    });
+
+  // --- comment ---
+  const comment = program
+    .command('comment')
+    .description('Manage file comments');
+
+  comment
+    .command('list')
+    .description('List comments — docz comment list <space>:<path>')
+    .argument('<target...>')
+    .action(async (args: string[]) => {
+      const client = getClient();
+      const { spaceId, path } = await resolveTarget(client, args);
+      if (!path) {
+        console.error('Error: file path is required.');
+        process.exit(1);
+      }
+      const comments = await client.listComments(spaceId, path);
+      if (comments.length === 0) {
+        console.log('No comments.');
+        return;
+      }
+      for (const c of comments) {
+        const status = c.is_closed ? ' [closed]' : '';
+        console.log(`#${c.id} ${c.user_name} (${c.created_at})${status}`);
+        console.log(`  ${c.content}`);
+        for (const r of c.replies) {
+          console.log(`    → ${r.user_name}: ${r.content}`);
+        }
+      }
+    });
+
+  comment
+    .command('add')
+    .description('Add comment — docz comment add <space>:<path> <content>')
+    .argument('<target>', 'space:path')
+    .argument('<content>', 'Comment text (or - for stdin)')
+    .action(async (target: string, content: string) => {
+      const { space, path } = parseTarget([target]);
+      if (!path) {
+        console.error('Error: file path is required.');
+        process.exit(1);
+      }
+      const client = getClient();
+      const s = await client.resolveSpace(space);
+      const body = content === '-' ? await readStdin() : content;
+      const c = await client.createComment(s.id, path, body);
+      console.log(`Comment #${c.id} created.`);
+    });
+
+  comment
+    .command('reply')
+    .description(
+      'Reply to comment — docz comment reply <space> <commentId> <content>'
+    )
+    .argument('<space>')
+    .argument('<commentId>')
+    .argument('<content>', 'Reply text (or - for stdin)')
+    .action(async (spaceName: string, commentId: string, content: string) => {
+      const client = getClient();
+      const s = await client.resolveSpace(spaceName);
+      const body = content === '-' ? await readStdin() : content;
+      const r = await client.replyComment(s.id, Number(commentId), body);
+      console.log(`Reply #${r.id} created.`);
+    });
+
+  comment
+    .command('close')
+    .description('Close comment — docz comment close <space> <commentId>')
+    .argument('<space>')
+    .argument('<commentId>')
+    .action(async (spaceName: string, commentId: string) => {
+      const client = getClient();
+      const s = await client.resolveSpace(spaceName);
+      await client.closeComment(s.id, Number(commentId));
+      console.log(`Comment #${commentId} closed.`);
+    });
+
+  comment
+    .command('rm')
+    .description('Delete comment — docz comment rm <space> <commentId>')
+    .argument('<space>')
+    .argument('<commentId>')
+    .action(async (spaceName: string, commentId: string) => {
+      const client = getClient();
+      const s = await client.resolveSpace(spaceName);
+      await client.deleteComment(s.id, Number(commentId));
+      console.log(`Comment #${commentId} deleted.`);
+    });
+
   // --- share ---
   const share = program.command('share').description('Manage share links');
 
@@ -382,28 +557,43 @@ export function registerCommands(program: Command): void {
     .option('--expires <duration>', 'Expiry duration (e.g. 7d, 24h)')
     .option('--users <emails>', 'Comma-separated user emails or IDs')
     .option('--groups <ids>', 'Comma-separated group IDs')
-    .action(async (target: string, opts: { expires?: string; users?: string; groups?: string }) => {
-      const { space, path } = parseTarget([target]);
-      if (!path) {
-        console.error('Error: file path is required. Usage: docz share create <space>:<path>');
-        process.exit(1);
+    .action(
+      async (
+        target: string,
+        opts: { expires?: string; users?: string; groups?: string }
+      ) => {
+        const { space, path } = parseTarget([target]);
+        if (!path) {
+          console.error(
+            'Error: file path is required. Usage: docz share create <space>:<path>'
+          );
+          process.exit(1);
+        }
+        const client = getClient();
+        const s = await client.resolveSpace(space);
+        const apiOpts: {
+          expiresAt?: string;
+          userIds?: string[];
+          groupIds?: string[];
+        } = {};
+        if (opts.expires) apiOpts.expiresAt = parseExpires(opts.expires);
+        if (opts.users)
+          apiOpts.userIds = opts.users.split(',').map((s) => s.trim());
+        if (opts.groups)
+          apiOpts.groupIds = opts.groups.split(',').map((s) => s.trim());
+        const link = await client.createShareLink(s.id, path, apiOpts);
+        const baseUrl = getBaseUrl();
+        console.log('Created share link:');
+        console.log(`  id:      ${link.id}`);
+        console.log(`  token:   ${link.token}`);
+        console.log(`  url:     ${baseUrl}/share/${link.token}`);
+        console.log(`  expires: ${link.expires_at ?? 'never'}`);
+        if (link.user_ids?.length)
+          console.log(`  users:   ${link.user_ids.join(', ')}`);
+        if (link.group_ids?.length)
+          console.log(`  groups:  ${link.group_ids.length}`);
       }
-      const client = getClient();
-      const s = await client.resolveSpace(space);
-      const apiOpts: { expiresAt?: string; userIds?: string[]; groupIds?: string[] } = {};
-      if (opts.expires) apiOpts.expiresAt = parseExpires(opts.expires);
-      if (opts.users) apiOpts.userIds = opts.users.split(',').map((s) => s.trim());
-      if (opts.groups) apiOpts.groupIds = opts.groups.split(',').map((s) => s.trim());
-      const link = await client.createShareLink(s.id, path, apiOpts);
-      const baseUrl = getBaseUrl();
-      console.log(`Created share link:`);
-      console.log(`  id:      ${link.id}`);
-      console.log(`  token:   ${link.token}`);
-      console.log(`  url:     ${baseUrl}/share/${link.token}`);
-      console.log(`  expires: ${link.expires_at ?? 'never'}`);
-      if (link.user_ids?.length) console.log(`  users:   ${link.user_ids.join(', ')}`);
-      if (link.group_ids?.length) console.log(`  groups:  ${link.group_ids.length}`);
-    });
+    );
 
   share
     .command('list')
@@ -421,7 +611,9 @@ export function registerCommands(program: Command): void {
       for (const l of links) {
         const expires = l.expires_at ?? 'never';
         const creator = l.created_by_name ?? l.created_by_email ?? l.created_by;
-        console.log(`${l.id}\t${l.token}\t${l.file_path}\t${expires}\t${creator}`);
+        console.log(
+          `${l.id}\t${l.token}\t${l.file_path}\t${expires}\t${creator}`
+        );
       }
     });
 
@@ -433,16 +625,28 @@ export function registerCommands(program: Command): void {
     .option('--expires <duration>', 'New expiry duration (e.g. 30d)')
     .option('--users <emails>', 'Comma-separated user emails or IDs')
     .option('--groups <ids>', 'Comma-separated group IDs')
-    .action(async (spaceName: string, linkId: string, opts: { expires?: string; users?: string; groups?: string }) => {
-      const client = getClient();
-      const s = await client.resolveSpace(spaceName);
-      const apiOpts: { expiresAt?: string; userIds?: string[]; groupIds?: string[] } = {};
-      if (opts.expires) apiOpts.expiresAt = parseExpires(opts.expires);
-      if (opts.users) apiOpts.userIds = opts.users.split(',').map((s) => s.trim());
-      if (opts.groups) apiOpts.groupIds = opts.groups.split(',').map((s) => s.trim());
-      await client.updateShareLink(s.id, linkId, apiOpts);
-      console.log(`Updated share link: ${linkId}`);
-    });
+    .action(
+      async (
+        spaceName: string,
+        linkId: string,
+        opts: { expires?: string; users?: string; groups?: string }
+      ) => {
+        const client = getClient();
+        const s = await client.resolveSpace(spaceName);
+        const apiOpts: {
+          expiresAt?: string;
+          userIds?: string[];
+          groupIds?: string[];
+        } = {};
+        if (opts.expires) apiOpts.expiresAt = parseExpires(opts.expires);
+        if (opts.users)
+          apiOpts.userIds = opts.users.split(',').map((s) => s.trim());
+        if (opts.groups)
+          apiOpts.groupIds = opts.groups.split(',').map((s) => s.trim());
+        await client.updateShareLink(s.id, linkId, apiOpts);
+        console.log(`Updated share link: ${linkId}`);
+      }
+    );
 
   share
     .command('cat')
@@ -456,7 +660,9 @@ export function registerCommands(program: Command): void {
         try {
           const info = await client.getSharedFileInfo(token);
           console.log(`File: ${info.file_path} (${info.space_name})`);
-          console.log(`Shared by: ${info.created_by_name} | Expires: ${info.expires_at ?? 'never'}`);
+          console.log(
+            `Shared by: ${info.created_by_name} | Expires: ${info.expires_at ?? 'never'}`
+          );
           console.log('---');
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
