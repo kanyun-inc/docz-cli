@@ -1,7 +1,7 @@
 ---
 name: docz
 description: Read and write company DocSync documents. Triggers on "docs", "documents", "upload file", "read space", "docz", "DocSync", "save file", "rollback", "comment", "share link", "diff"
-version: 0.8.0
+version: 0.9.0
 author: kris
 tags:
   - docsync
@@ -38,14 +38,23 @@ All commands use `<space>:<path>`. The `<space>` segment accepts a space name or
 研发:docs/guide.md      → specific file
 ```
 
-### Short URL Support
+### URL Support
 
-`cat`, `ls`, `log` also accept DocSync short URLs directly:
+All commands accept DocSync URLs directly. Supported formats:
+
+- **Short URL (fileId)**: `/s/{slug}/f/{fileId}` — resolves fileId to path via API
+- **Path URL**: `/s/{slug}/path/to/file.md` — file path in URL
+- **Space URL**: `/s/{slug}` — space root
+- **Legacy URL**: `/spaces/{spaceId}/path/to/file` — old format, still works
 
 ```bash
 npx docz-cli@latest cat https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c
+npx docz-cli@latest cat https://docz.zhenguanyu.com/s/yanfa/docs/guide.md
 npx docz-cli@latest ls https://docz.zhenguanyu.com/s/yanfa
-npx docz-cli@latest log https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c
+npx docz-cli@latest write https://docz.zhenguanyu.com/s/yanfa/docs/guide.md 'new content'
+npx docz-cli@latest rm https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c
+npx docz-cli@latest diff https://docz.zhenguanyu.com/s/yanfa/docs/guide.md abc1234
+npx docz-cli@latest trash https://docz.zhenguanyu.com/s/yanfa
 ```
 
 ## Commands
@@ -172,5 +181,5 @@ done | npx docz-cli@latest write 研发:full-report.md -
 - Backend is Git: every write creates a commit. Use `log` to see history, `diff` to see changes.
 - After writing a file, use `shortlink` to get a clickable URL for the user.
 - Text files (.md, .csv, .html) work with `cat`. Binary files (images, PDF) use `upload` only.
-- Short URLs (`/s/slug/f/fileId`) can be pasted directly into `cat`, `ls`, `log`.
+- Any DocSync URL can be pasted directly into any command. Supports short URLs (`/s/slug/f/fileId`), path URLs (`/s/slug/path/to/file`), and legacy URLs (`/spaces/id/path`).
 - Share links let you share files with specific users or publicly, with optional expiry.

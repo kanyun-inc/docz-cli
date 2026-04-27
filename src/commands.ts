@@ -25,7 +25,7 @@ function getClient(): DocSyncClient {
 }
 
 /** Parse "space:path" or "space path" format */
-function parseTarget(args: string[]): { space: string; path: string } {
+export function parseTarget(args: string[]): { space: string; path: string } {
   if (args.length === 0) {
     console.error(
       'Error: space is required. Usage: docz <cmd> <space>[:<path>]'
@@ -46,37 +46,8 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// Short URL patterns: /s/{slug}/f/{fileId} or /s/{slug}
-const SHORT_URL_RE = /\/s\/([^/]+)\/f\/([^/?\s]+)/;
-const SLUG_ONLY_RE = /\/s\/([^/?\s]+)\/?(?:\?.*)?$/;
 // Share URL: /share/{token}
 const SHARE_URL_RE = /\/share\/([^/?\s]+)/;
-
-/**
- * Detect if input is a URL and resolve it to { spaceId, path }.
- * Returns null if not a URL.
- */
-async function resolveUrl(
-  client: DocSyncClient,
-  input: string
-): Promise<{ spaceId: string; path: string } | null> {
-  // Match /s/{slug}/f/{fileId}
-  const fileMatch = input.match(SHORT_URL_RE);
-  if (fileMatch) {
-    const [, slug, fileId] = fileMatch;
-    const space = await resolveSlug(client, slug);
-    const ref = await client.resolveFileRef(fileId);
-    return { spaceId: space.id, path: ref.path };
-  }
-  // Match /s/{slug} (directory listing)
-  const slugMatch = input.match(SLUG_ONLY_RE);
-  if (slugMatch) {
-    const [, slug] = slugMatch;
-    const space = await resolveSlug(client, slug);
-    return { spaceId: space.id, path: '' };
-  }
-  return null;
-}
 
 /** Resolve slug: try local spaces cache first, then API */
 async function resolveSlug(
@@ -94,9 +65,57 @@ async function resolveSlug(
 }
 
 /**
- * Resolve target: if it's a short URL, resolve it; otherwise use parseTarget + resolveSpace.
+ * Detect if input is a URL and resolve it to { spaceId, path }.
+ * Supports:
+ *   /s/{slug}/f/{fileId}         — short URL with fileId
+ *   /s/{slug}[/path/to/file]     — slug URL with optional path
+ *   /spaces/{spaceId}[/path/...] — legacy URL
+ * Returns null if not a recognized DocSync URL.
  */
-async function resolveTarget(
+async function resolveUrl(
+  client: DocSyncClient,
+  input: string
+): Promise<{ spaceId: string; path: string } | null> {
+  let pathname: string;
+  try {
+    pathname = new URL(input).pathname;
+  } catch {
+    return null;
+  }
+
+  // /s/{slug}/f/{fileId}
+  const fileMatch = pathname.match(/^\/s\/([^/]+)\/f\/([^/]+)$/);
+  if (fileMatch) {
+    const [, slug, fileId] = fileMatch;
+    const space = await resolveSlug(client, slug);
+    const ref = await client.resolveFileRef(fileId);
+    return { spaceId: space.id, path: ref.path };
+  }
+
+  // /s/{slug}[/path/to/file]
+  const slugMatch = pathname.match(/^\/s\/([^/]+)(\/.*)?$/);
+  if (slugMatch) {
+    const [, slug, rest] = slugMatch;
+    const space = await resolveSlug(client, slug);
+    const filePath = rest ? decodeURIComponent(rest.slice(1)) : '';
+    return { spaceId: space.id, path: filePath };
+  }
+
+  // /spaces/{spaceId}[/path/to/file] (legacy)
+  const legacyMatch = pathname.match(/^\/spaces\/([^/]+)(\/.*)?$/);
+  if (legacyMatch) {
+    const [, spaceId, rest] = legacyMatch;
+    const filePath = rest ? decodeURIComponent(rest.slice(1)) : '';
+    return { spaceId, path: filePath };
+  }
+
+  return null;
+}
+
+/**
+ * Resolve target: if it's a URL, resolve it; otherwise use parseTarget + resolveSpace.
+ */
+export async function resolveTarget(
   client: DocSyncClient,
   args: string[]
 ): Promise<{ spaceId: string; path: string }> {
@@ -104,10 +123,31 @@ async function resolveTarget(
   if (first && (first.startsWith('http://') || first.startsWith('https://'))) {
     const result = await resolveUrl(client, first);
     if (result) return result;
+    throw new Error(
+      `Unrecognized DocSync URL: ${first}\nExpected: /s/{slug}[/f/{fileId}], /s/{slug}[/path], or /spaces/{id}[/path]`
+    );
   }
   const { space, path } = parseTarget(args);
   const s = await client.resolveSpace(space);
   return { spaceId: s.id, path };
+}
+
+/**
+ * Resolve a space argument that may be a name, UUID, or URL.
+ * For URLs, delegates to resolveUrl and extracts the spaceId.
+ */
+export async function resolveSpaceArg(
+  client: DocSyncClient,
+  input: string
+): Promise<{ id: string }> {
+  if (input.startsWith('http://') || input.startsWith('https://')) {
+    const result = await resolveUrl(client, input);
+    if (result) return { id: result.spaceId };
+    throw new Error(
+      `Unrecognized DocSync URL: ${input}\nExpected: /s/{slug}[/f/{fileId}], /s/{slug}[/path], or /spaces/{id}[/path]`
+    );
+  }
+  return client.resolveSpace(input);
 }
 
 /** Parse relative duration (7d, 24h, 30d) to RFC3339 */
@@ -253,25 +293,28 @@ export function registerCommands(program: Command): void {
   // --- upload ---
   program
     .command('upload')
-    .description('Upload file — docz upload <local-file> <space>[:<dir>]')
+    .description(
+      'Upload file — docz upload <local-file> <space>[:<dir>] or <url>'
+    )
     .argument('<file>', 'Local file to upload')
     .argument('<target...>')
     .action(async (file: string, args: string[]) => {
-      const { space, path: dir } = parseTarget(args);
       const client = getClient();
-      const s = await client.resolveSpace(space);
+      const { spaceId, path: dir } = await resolveTarget(client, args);
       const content = readFileSync(file);
       const filename = basename(file);
       const targetDir = dir || '';
-      const result = await client.upload(s.id, targetDir, filename, content);
+      const result = await client.upload(spaceId, targetDir, filename, content);
       console.log(`Uploaded: ${result.path}`);
     });
 
   // --- write ---
   program
     .command('write')
-    .description('Write content to file — docz write <space>:<path> <content>')
-    .argument('<target>', 'space:dir/filename.md')
+    .description(
+      'Write content to file — docz write <space>:<path> <content> or <url> <content>'
+    )
+    .argument('<target>', 'space:dir/filename.md or short URL')
     .argument('<content>', 'File content (or - for stdin)')
     .option('--force', 'Skip conflict detection')
     .option('-m, --message <msg>', 'Custom commit message')
@@ -281,15 +324,14 @@ export function registerCommands(program: Command): void {
         content: string,
         opts: { force?: boolean; message?: string }
       ) => {
-        const { space, path } = parseTarget([target]);
+        const client = getClient();
+        const { spaceId, path } = await resolveTarget(client, [target]);
         if (!path) {
           console.error(
             'Error: path is required. Usage: docz write <space>:<dir/filename> <content>'
           );
           process.exit(1);
         }
-        const client = getClient();
-        const s = await client.resolveSpace(space);
         const body = content === '-' ? await readStdin() : content;
 
         if (Buffer.byteLength(body, 'utf-8') > MAX_SAVE_SIZE) {
@@ -302,7 +344,7 @@ export function registerCommands(program: Command): void {
         let baseRef: string | undefined;
         if (!opts.force) {
           try {
-            const existing = await client.catWithRef(s.id, path);
+            const existing = await client.catWithRef(spaceId, path);
             baseRef = existing.ref;
           } catch (err) {
             const msg = err instanceof Error ? err.message : '';
@@ -311,7 +353,7 @@ export function registerCommands(program: Command): void {
         }
 
         try {
-          const result = await client.save(s.id, path, body, {
+          const result = await client.save(spaceId, path, body, {
             baseRef,
             message: opts.message,
           });
@@ -331,52 +373,49 @@ export function registerCommands(program: Command): void {
   // --- mkdir ---
   program
     .command('mkdir')
-    .description('Create folder — docz mkdir <space>:<path>')
+    .description('Create folder — docz mkdir <space>:<path> or <url>')
     .argument('<target...>')
     .action(async (args: string[]) => {
-      const { space, path } = parseTarget(args);
+      const client = getClient();
+      const { spaceId, path } = await resolveTarget(client, args);
       if (!path) {
         console.error('Error: path is required.');
         process.exit(1);
       }
-      const client = getClient();
-      const s = await client.resolveSpace(space);
-      await client.mkdir(s.id, path);
+      await client.mkdir(spaceId, path);
       console.log(`Created: ${path}`);
     });
 
   // --- rm ---
   program
     .command('rm')
-    .description('Delete file/folder — docz rm <space>:<path>')
+    .description('Delete file/folder — docz rm <space>:<path> or <url>')
     .argument('<target...>')
     .action(async (args: string[]) => {
-      const { space, path } = parseTarget(args);
+      const client = getClient();
+      const { spaceId, path } = await resolveTarget(client, args);
       if (!path) {
         console.error('Error: path is required.');
         process.exit(1);
       }
-      const client = getClient();
-      const s = await client.resolveSpace(space);
-      await client.rm(s.id, path);
+      await client.rm(spaceId, path);
       console.log(`Deleted: ${path} (recoverable from trash for 30 days)`);
     });
 
   // --- mv ---
   program
     .command('mv')
-    .description('Rename/move — docz mv <space>:<from> <to>')
-    .argument('<target>', 'space:old-path')
+    .description('Rename/move — docz mv <space>:<from> <to> or <url> <to>')
+    .argument('<target>', 'space:old-path or short URL')
     .argument('<to>', 'new-path')
     .action(async (target: string, to: string) => {
-      const { space, path: from } = parseTarget([target]);
+      const client = getClient();
+      const { spaceId, path: from } = await resolveTarget(client, [target]);
       if (!from) {
         console.error('Error: source path is required.');
         process.exit(1);
       }
-      const client = getClient();
-      const s = await client.resolveSpace(space);
-      await client.mv(s.id, from, to);
+      await client.mv(spaceId, from, to);
       console.log(`Moved: ${from} → ${to}`);
     });
 
@@ -402,19 +441,18 @@ export function registerCommands(program: Command): void {
   program
     .command('rollback')
     .description(
-      'Rollback file to a previous version — docz rollback <space>:<path> <commit>'
+      'Rollback file to a previous version — docz rollback <space>:<path> <commit> or <url> <commit>'
     )
-    .argument('<target>', 'space:path')
+    .argument('<target>', 'space:path or short URL')
     .argument('<commit>', 'Commit hash to rollback to')
     .action(async (target: string, commit: string) => {
-      const { space, path } = parseTarget([target]);
+      const client = getClient();
+      const { spaceId, path } = await resolveTarget(client, [target]);
       if (!path) {
         console.error('Error: file path is required.');
         process.exit(1);
       }
-      const client = getClient();
-      const s = await client.resolveSpace(space);
-      await client.rollback(s.id, path, commit);
+      await client.rollback(spaceId, path, commit);
       console.log(`Rolled back: ${path} → ${commit.substring(0, 7)}`);
     });
 
@@ -425,7 +463,7 @@ export function registerCommands(program: Command): void {
     .argument('<space>')
     .action(async (spaceName: string) => {
       const client = getClient();
-      const s = await client.resolveSpace(spaceName);
+      const s = await resolveSpaceArg(client, spaceName);
       const items = await client.trash(s.id);
       if (items.length === 0) {
         console.log('Trash is empty.');
@@ -442,19 +480,18 @@ export function registerCommands(program: Command): void {
   program
     .command('restore')
     .description(
-      'Restore file from trash — docz restore <space>:<path> <commit>'
+      'Restore file from trash — docz restore <space>:<path> <commit> or <url> <commit>'
     )
-    .argument('<target>', 'space:path')
+    .argument('<target>', 'space:path or short URL')
     .argument('<commit>', 'Commit hash from trash listing')
     .action(async (target: string, commit: string) => {
-      const { space, path } = parseTarget([target]);
+      const client = getClient();
+      const { spaceId, path } = await resolveTarget(client, [target]);
       if (!path) {
         console.error('Error: path is required.');
         process.exit(1);
       }
-      const client = getClient();
-      const s = await client.resolveSpace(space);
-      await client.restore(s.id, path, commit);
+      await client.restore(spaceId, path, commit);
       console.log(`Restored: ${path}`);
     });
 
@@ -491,19 +528,20 @@ export function registerCommands(program: Command): void {
 
   comment
     .command('add')
-    .description('Add comment — docz comment add <space>:<path> <content>')
-    .argument('<target>', 'space:path')
+    .description(
+      'Add comment — docz comment add <space>:<path> <content> or <url> <content>'
+    )
+    .argument('<target>', 'space:path or short URL')
     .argument('<content>', 'Comment text (or - for stdin)')
     .action(async (target: string, content: string) => {
-      const { space, path } = parseTarget([target]);
+      const client = getClient();
+      const { spaceId, path } = await resolveTarget(client, [target]);
       if (!path) {
         console.error('Error: file path is required.');
         process.exit(1);
       }
-      const client = getClient();
-      const s = await client.resolveSpace(space);
       const body = content === '-' ? await readStdin() : content;
-      const c = await client.createComment(s.id, path, body);
+      const c = await client.createComment(spaceId, path, body);
       console.log(`Comment #${c.id} created.`);
     });
 
@@ -517,7 +555,7 @@ export function registerCommands(program: Command): void {
     .argument('<content>', 'Reply text (or - for stdin)')
     .action(async (spaceName: string, commentId: string, content: string) => {
       const client = getClient();
-      const s = await client.resolveSpace(spaceName);
+      const s = await resolveSpaceArg(client, spaceName);
       const body = content === '-' ? await readStdin() : content;
       const r = await client.replyComment(s.id, Number(commentId), body);
       console.log(`Reply #${r.id} created.`);
@@ -530,7 +568,7 @@ export function registerCommands(program: Command): void {
     .argument('<commentId>')
     .action(async (spaceName: string, commentId: string) => {
       const client = getClient();
-      const s = await client.resolveSpace(spaceName);
+      const s = await resolveSpaceArg(client, spaceName);
       await client.closeComment(s.id, Number(commentId));
       console.log(`Comment #${commentId} closed.`);
     });
@@ -542,7 +580,7 @@ export function registerCommands(program: Command): void {
     .argument('<commentId>')
     .action(async (spaceName: string, commentId: string) => {
       const client = getClient();
-      const s = await client.resolveSpace(spaceName);
+      const s = await resolveSpaceArg(client, spaceName);
       await client.deleteComment(s.id, Number(commentId));
       console.log(`Comment #${commentId} deleted.`);
     });
@@ -552,8 +590,10 @@ export function registerCommands(program: Command): void {
 
   share
     .command('create')
-    .description('Create share link — docz share create <space>:<path>')
-    .argument('<target>', 'space:path')
+    .description(
+      'Create share link — docz share create <space>:<path> or <url>'
+    )
+    .argument('<target>', 'space:path or short URL')
     .option('--expires <duration>', 'Expiry duration (e.g. 7d, 24h)')
     .option('--users <emails>', 'Comma-separated user emails or IDs')
     .option('--groups <ids>', 'Comma-separated group IDs')
@@ -562,15 +602,14 @@ export function registerCommands(program: Command): void {
         target: string,
         opts: { expires?: string; users?: string; groups?: string }
       ) => {
-        const { space, path } = parseTarget([target]);
+        const client = getClient();
+        const { spaceId, path } = await resolveTarget(client, [target]);
         if (!path) {
           console.error(
             'Error: file path is required. Usage: docz share create <space>:<path>'
           );
           process.exit(1);
         }
-        const client = getClient();
-        const s = await client.resolveSpace(space);
         const apiOpts: {
           expiresAt?: string;
           userIds?: string[];
@@ -581,7 +620,7 @@ export function registerCommands(program: Command): void {
           apiOpts.userIds = opts.users.split(',').map((s) => s.trim());
         if (opts.groups)
           apiOpts.groupIds = opts.groups.split(',').map((s) => s.trim());
-        const link = await client.createShareLink(s.id, path, apiOpts);
+        const link = await client.createShareLink(spaceId, path, apiOpts);
         const baseUrl = getBaseUrl();
         console.log('Created share link:');
         console.log(`  id:      ${link.id}`);
@@ -602,7 +641,7 @@ export function registerCommands(program: Command): void {
     .option('--file <path>', 'Filter by file path')
     .action(async (spaceName: string, opts: { file?: string }) => {
       const client = getClient();
-      const s = await client.resolveSpace(spaceName);
+      const s = await resolveSpaceArg(client, spaceName);
       const links = await client.listShareLinks(s.id, opts.file);
       if (links.length === 0) {
         console.log('No share links.');
@@ -632,7 +671,7 @@ export function registerCommands(program: Command): void {
         opts: { expires?: string; users?: string; groups?: string }
       ) => {
         const client = getClient();
-        const s = await client.resolveSpace(spaceName);
+        const s = await resolveSpaceArg(client, spaceName);
         const apiOpts: {
           expiresAt?: string;
           userIds?: string[];
@@ -696,7 +735,7 @@ export function registerCommands(program: Command): void {
     .argument('<linkId>')
     .action(async (spaceName: string, linkId: string) => {
       const client = getClient();
-      const s = await client.resolveSpace(spaceName);
+      const s = await resolveSpaceArg(client, spaceName);
       await client.deleteShareLink(s.id, linkId);
       console.log(`Deleted share link: ${linkId}`);
     });
@@ -722,23 +761,24 @@ export function registerCommands(program: Command): void {
   // --- diff ---
   program
     .command('diff')
-    .description('Show changes — docz diff <space>[:<path>] <commit> [<from>]')
-    .argument('<target>', 'space or space:path')
+    .description(
+      'Show changes — docz diff <space>[:<path>] <commit> [<from>] or <url> <commit> [<from>]'
+    )
+    .argument('<target>', 'space or space:path or short URL')
     .argument('<to>', 'Commit hash')
     .argument('[from]', 'From commit hash (default: to^)')
     .action(async (target: string, to: string, from?: string) => {
       const client = getClient();
-      const { space, path } = parseTarget([target]);
-      const s = await client.resolveSpace(space);
+      const { spaceId, path } = await resolveTarget(client, [target]);
       if (path) {
-        const result = await client.diffFile(s.id, path, to, from);
+        const result = await client.diffFile(spaceId, path, to, from);
         if (result.diff) {
           process.stdout.write(result.diff);
         } else {
           console.log('No changes.');
         }
       } else {
-        const result = await client.diffSummary(s.id, to, from);
+        const result = await client.diffSummary(spaceId, to, from);
         if (result.files.length === 0) {
           console.log('No changes.');
           return;
