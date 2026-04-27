@@ -113,6 +113,26 @@ export async function resolveTarget(
   return { spaceId: s.id, path };
 }
 
+const SLUG_FROM_URL_RE = /\/s\/([^/?\s#]+)/;
+
+/**
+ * Resolve a space argument that may be a name, UUID, or short URL.
+ * Extracts slug from URL and resolves to space; throws on unrecognized URL.
+ */
+export async function resolveSpaceArg(
+  client: DocSyncClient,
+  input: string
+): Promise<{ id: string }> {
+  if (input.startsWith('http://') || input.startsWith('https://')) {
+    const m = input.match(SLUG_FROM_URL_RE);
+    if (m) return resolveSlug(client, m[1]);
+    throw new Error(
+      `Unrecognized DocSync URL: ${input}\nExpected format: https://docz.zhenguanyu.com/s/{slug}[/f/{fileId}]`
+    );
+  }
+  return client.resolveSpace(input);
+}
+
 /** Parse relative duration (7d, 24h, 30d) to RFC3339 */
 export function parseExpires(value: string): string {
   const match = value.match(/^(\d+)([dh])$/);
@@ -426,7 +446,7 @@ export function registerCommands(program: Command): void {
     .argument('<space>')
     .action(async (spaceName: string) => {
       const client = getClient();
-      const s = await client.resolveSpace(spaceName);
+      const s = await resolveSpaceArg(client, spaceName);
       const items = await client.trash(s.id);
       if (items.length === 0) {
         console.log('Trash is empty.');
@@ -518,7 +538,7 @@ export function registerCommands(program: Command): void {
     .argument('<content>', 'Reply text (or - for stdin)')
     .action(async (spaceName: string, commentId: string, content: string) => {
       const client = getClient();
-      const s = await client.resolveSpace(spaceName);
+      const s = await resolveSpaceArg(client, spaceName);
       const body = content === '-' ? await readStdin() : content;
       const r = await client.replyComment(s.id, Number(commentId), body);
       console.log(`Reply #${r.id} created.`);
@@ -531,7 +551,7 @@ export function registerCommands(program: Command): void {
     .argument('<commentId>')
     .action(async (spaceName: string, commentId: string) => {
       const client = getClient();
-      const s = await client.resolveSpace(spaceName);
+      const s = await resolveSpaceArg(client, spaceName);
       await client.closeComment(s.id, Number(commentId));
       console.log(`Comment #${commentId} closed.`);
     });
@@ -543,7 +563,7 @@ export function registerCommands(program: Command): void {
     .argument('<commentId>')
     .action(async (spaceName: string, commentId: string) => {
       const client = getClient();
-      const s = await client.resolveSpace(spaceName);
+      const s = await resolveSpaceArg(client, spaceName);
       await client.deleteComment(s.id, Number(commentId));
       console.log(`Comment #${commentId} deleted.`);
     });
@@ -604,7 +624,7 @@ export function registerCommands(program: Command): void {
     .option('--file <path>', 'Filter by file path')
     .action(async (spaceName: string, opts: { file?: string }) => {
       const client = getClient();
-      const s = await client.resolveSpace(spaceName);
+      const s = await resolveSpaceArg(client, spaceName);
       const links = await client.listShareLinks(s.id, opts.file);
       if (links.length === 0) {
         console.log('No share links.');
@@ -634,7 +654,7 @@ export function registerCommands(program: Command): void {
         opts: { expires?: string; users?: string; groups?: string }
       ) => {
         const client = getClient();
-        const s = await client.resolveSpace(spaceName);
+        const s = await resolveSpaceArg(client, spaceName);
         const apiOpts: {
           expiresAt?: string;
           userIds?: string[];
@@ -698,7 +718,7 @@ export function registerCommands(program: Command): void {
     .argument('<linkId>')
     .action(async (spaceName: string, linkId: string) => {
       const client = getClient();
-      const s = await client.resolveSpace(spaceName);
+      const s = await resolveSpaceArg(client, spaceName);
       await client.deleteShareLink(s.id, linkId);
       console.log(`Deleted share link: ${linkId}`);
     });

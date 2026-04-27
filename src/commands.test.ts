@@ -2,7 +2,12 @@ import { HttpResponse, http } from 'msw';
 import { setupServer } from 'msw/node';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { DocSyncClient } from './client.js';
-import { parseExpires, parseTarget, resolveTarget } from './commands.js';
+import {
+  parseExpires,
+  parseTarget,
+  resolveSpaceArg,
+  resolveTarget,
+} from './commands.js';
 
 // ---------------------------------------------------------------------------
 // Mock data & MSW server (mirrors client.test.ts)
@@ -228,6 +233,62 @@ describe('resolveTarget', () => {
   it('throws on URL with no matching pattern', async () => {
     await expect(
       resolveTarget(client, ['https://example.com/some/page'])
+    ).rejects.toThrow('Unrecognized DocSync URL');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveSpaceArg — space-only commands with URL support
+// ---------------------------------------------------------------------------
+
+describe('resolveSpaceArg', () => {
+  const client = new DocSyncClient(BASE, TOKEN);
+
+  it('resolves space by name', async () => {
+    const s = await resolveSpaceArg(client, '研发');
+    expect(s.id).toBe(SID);
+  });
+
+  it('resolves space by id', async () => {
+    const s = await resolveSpaceArg(client, SID);
+    expect(s.id).toBe(SID);
+  });
+
+  it('extracts space from /s/{slug}/f/{fileId} URL', async () => {
+    const s = await resolveSpaceArg(
+      client,
+      'https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c'
+    );
+    expect(s.id).toBe('space-priv');
+  });
+
+  it('extracts space from /s/{slug} URL', async () => {
+    const s = await resolveSpaceArg(
+      client,
+      'https://docz.zhenguanyu.com/s/yanfa'
+    );
+    expect(s.id).toBe(SID);
+  });
+
+  it('extracts space from URL with #fragment', async () => {
+    const s = await resolveSpaceArg(
+      client,
+      'https://docz.zhenguanyu.com/s/yanfa#readme'
+    );
+    expect(s.id).toBe(SID);
+  });
+
+  it('extracts space from URL with query params', async () => {
+    const s = await resolveSpaceArg(
+      client,
+      'https://docz.zhenguanyu.com/s/yanfa?tab=files'
+    );
+    expect(s.id).toBe(SID);
+  });
+
+  it('throws on unrecognized URL', async () => {
+    await expect(
+      resolveSpaceArg(client, 'https://example.com/no-slug')
     ).rejects.toThrow('Unrecognized DocSync URL');
   });
 });
