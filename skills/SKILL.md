@@ -40,12 +40,15 @@ All commands use `<space>:<path>`. The `<space>` segment accepts a space name or
 
 ### Short URL Support
 
-`cat`, `ls`, `log` also accept DocSync short URLs directly:
+All commands accept DocSync short URLs (`/s/{slug}/f/{fileId}` or `/s/{slug}`) directly:
 
 ```bash
 npx docz-cli@latest cat https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c
 npx docz-cli@latest ls https://docz.zhenguanyu.com/s/yanfa
 npx docz-cli@latest log https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c
+npx docz-cli@latest write https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c 'new content'
+npx docz-cli@latest rm https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c
+npx docz-cli@latest diff https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c abc1234
 ```
 
 ## Commands
@@ -172,5 +175,5 @@ done | npx docz-cli@latest write 研发:full-report.md -
 - Backend is Git: every write creates a commit. Use `log` to see history, `diff` to see changes.
 - After writing a file, use `shortlink` to get a clickable URL for the user.
 - Text files (.md, .csv, .html) work with `cat`. Binary files (images, PDF) use `upload` only.
-- Short URLs (`/s/slug/f/fileId`) can be pasted directly into `cat`, `ls`, `log`.
+- Short URLs (`/s/slug/f/fileId`) can be pasted directly into any command (`cat`, `ls`, `log`, `write`, `rm`, `mv`, `diff`, etc.).
 - Share links let you share files with specific users or publicly, with optional expiry.
