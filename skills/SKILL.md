@@ -40,7 +40,7 @@ All commands use `<space>:<path>`. The `<space>` segment accepts a space name or
 
 ### Short URL Support
 
-All commands accept DocSync short URLs (`/s/{slug}/f/{fileId}` or `/s/{slug}`) directly:
+Most commands accept DocSync short URLs (`/s/{slug}/f/{fileId}` or `/s/{slug}`) directly as target:
 
 ```bash
 npx docz-cli@latest cat https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c
@@ -175,5 +175,5 @@ done | npx docz-cli@latest write 研发:full-report.md -
 - Backend is Git: every write creates a commit. Use `log` to see history, `diff` to see changes.
 - After writing a file, use `shortlink` to get a clickable URL for the user.
 - Text files (.md, .csv, .html) work with `cat`. Binary files (images, PDF) use `upload` only.
-- Short URLs (`/s/slug/f/fileId`) can be pasted directly into any command (`cat`, `ls`, `log`, `write`, `rm`, `mv`, `diff`, etc.).
+- Short URLs (`/s/slug/f/fileId`) can be pasted directly into most commands (`cat`, `ls`, `log`, `write`, `rm`, `mv`, `diff`, `upload`, `rollback`, `restore`, `mkdir`, `comment list/add`, `share create`, `shortlink`). Space-only commands (`trash`, `comment reply/close/rm`, `share list/update/rm`) still require space name.
 - Share links let you share files with specific users or publicly, with optional expiry.

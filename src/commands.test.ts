@@ -202,4 +202,32 @@ describe('resolveTarget', () => {
     expect(result.spaceId).toBe(SID);
     expect(result.path).toBe('');
   });
+
+  it('strips #fragment from fileId in short URL', async () => {
+    const result = await resolveTarget(client, [
+      'https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c#section-2',
+    ]);
+    expect(result.spaceId).toBe('space-priv');
+    expect(result.path).toBe('docs/guide.md');
+  });
+
+  it('strips #fragment from slug-only URL', async () => {
+    const result = await resolveTarget(client, [
+      'https://docz.zhenguanyu.com/s/yanfa#readme',
+    ]);
+    expect(result.spaceId).toBe(SID);
+    expect(result.path).toBe('');
+  });
+
+  it('throws on unrecognized URL instead of falling through', async () => {
+    await expect(
+      resolveTarget(client, ['https://docz.zhenguanyu.com/unknown/path'])
+    ).rejects.toThrow('Unrecognized DocSync URL');
+  });
+
+  it('throws on URL with no matching pattern', async () => {
+    await expect(
+      resolveTarget(client, ['https://example.com/some/page'])
+    ).rejects.toThrow('Unrecognized DocSync URL');
+  });
 });

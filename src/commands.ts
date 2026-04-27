@@ -47,8 +47,8 @@ function formatSize(bytes: number): string {
 }
 
 // Short URL patterns: /s/{slug}/f/{fileId} or /s/{slug}
-const SHORT_URL_RE = /\/s\/([^/]+)\/f\/([^/?\s]+)/;
-const SLUG_ONLY_RE = /\/s\/([^/?\s]+)\/?(?:\?.*)?$/;
+const SHORT_URL_RE = /\/s\/([^/]+)\/f\/([^/?\s#]+)/;
+const SLUG_ONLY_RE = /\/s\/([^/?\s#]+)\/?(?:[?#].*)?$/;
 // Share URL: /share/{token}
 const SHARE_URL_RE = /\/share\/([^/?\s]+)/;
 
@@ -104,6 +104,9 @@ export async function resolveTarget(
   if (first && (first.startsWith('http://') || first.startsWith('https://'))) {
     const result = await resolveUrl(client, first);
     if (result) return result;
+    throw new Error(
+      `Unrecognized DocSync URL: ${first}\nExpected format: https://docz.zhenguanyu.com/s/{slug}/f/{fileId} or /s/{slug}`
+    );
   }
   const { space, path } = parseTarget(args);
   const s = await client.resolveSpace(space);
