@@ -132,36 +132,13 @@ describe('parseTarget', () => {
 describe('resolveTarget', () => {
   const client = new DocSyncClient(BASE, TOKEN);
 
+  // --- short URL: /s/{slug}/f/{fileId} ---
   it('resolves /s/{slug}/f/{fileId} short URL', async () => {
     const result = await resolveTarget(client, [
       'https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c',
     ]);
     expect(result.spaceId).toBe('space-priv');
     expect(result.path).toBe('docs/guide.md');
-  });
-
-  it('resolves /s/{slug} short URL (directory)', async () => {
-    const result = await resolveTarget(client, [
-      'https://docz.zhenguanyu.com/s/yanfa',
-    ]);
-    expect(result.spaceId).toBe(SID);
-    expect(result.path).toBe('');
-  });
-
-  it('resolves short URL with trailing slash', async () => {
-    const result = await resolveTarget(client, [
-      'https://docz.zhenguanyu.com/s/yanfa/',
-    ]);
-    expect(result.spaceId).toBe(SID);
-    expect(result.path).toBe('');
-  });
-
-  it('resolves short URL with query params', async () => {
-    const result = await resolveTarget(client, [
-      'https://docz.zhenguanyu.com/s/yanfa?tab=files',
-    ]);
-    expect(result.spaceId).toBe(SID);
-    expect(result.path).toBe('');
   });
 
   it('resolves another file short URL', async () => {
@@ -172,6 +149,105 @@ describe('resolveTarget', () => {
     expect(result.path).toBe('AI-Coding技巧总结-摘要.md');
   });
 
+  it('strips #fragment from fileId in short URL', async () => {
+    const result = await resolveTarget(client, [
+      'https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c#section-2',
+    ]);
+    expect(result.spaceId).toBe('space-priv');
+    expect(result.path).toBe('docs/guide.md');
+  });
+
+  it('throws on unknown fileId in short URL', async () => {
+    await expect(
+      resolveTarget(client, [
+        'https://docz.zhenguanyu.com/s/yanhongkang/f/BADID',
+      ])
+    ).rejects.toThrow();
+  });
+
+  // --- slug URL: /s/{slug}[/path] ---
+  it('resolves /s/{slug} (space root)', async () => {
+    const result = await resolveTarget(client, [
+      'https://docz.zhenguanyu.com/s/yanfa',
+    ]);
+    expect(result.spaceId).toBe(SID);
+    expect(result.path).toBe('');
+  });
+
+  it('resolves /s/{slug}/ with trailing slash', async () => {
+    const result = await resolveTarget(client, [
+      'https://docz.zhenguanyu.com/s/yanfa/',
+    ]);
+    expect(result.spaceId).toBe(SID);
+    expect(result.path).toBe('');
+  });
+
+  it('resolves /s/{slug}/path/to/file.md (path URL)', async () => {
+    const result = await resolveTarget(client, [
+      'https://docz.zhenguanyu.com/s/yanfa/docs/guide.md',
+    ]);
+    expect(result.spaceId).toBe(SID);
+    expect(result.path).toBe('docs/guide.md');
+  });
+
+  it('resolves /s/{slug}/subdir (directory path URL)', async () => {
+    const result = await resolveTarget(client, [
+      'https://docz.zhenguanyu.com/s/yanfa/docs',
+    ]);
+    expect(result.spaceId).toBe(SID);
+    expect(result.path).toBe('docs');
+  });
+
+  it('resolves path URL with ?view=file query param', async () => {
+    const result = await resolveTarget(client, [
+      'https://docz.zhenguanyu.com/s/yanfa/docs/guide.md?view=file',
+    ]);
+    expect(result.spaceId).toBe(SID);
+    expect(result.path).toBe('docs/guide.md');
+  });
+
+  it('resolves slug URL with query params', async () => {
+    const result = await resolveTarget(client, [
+      'https://docz.zhenguanyu.com/s/yanfa?tab=files',
+    ]);
+    expect(result.spaceId).toBe(SID);
+    expect(result.path).toBe('');
+  });
+
+  it('strips #fragment from slug URL', async () => {
+    const result = await resolveTarget(client, [
+      'https://docz.zhenguanyu.com/s/yanfa#readme',
+    ]);
+    expect(result.spaceId).toBe(SID);
+    expect(result.path).toBe('');
+  });
+
+  it('decodes percent-encoded path in URL', async () => {
+    const result = await resolveTarget(client, [
+      'https://docz.zhenguanyu.com/s/yanfa/%E6%96%87%E6%A1%A3/guide.md',
+    ]);
+    expect(result.spaceId).toBe(SID);
+    expect(result.path).toBe('文档/guide.md');
+  });
+
+  // --- legacy URL: /spaces/{spaceId}[/path] ---
+  it('resolves /spaces/{spaceId} (legacy root)', async () => {
+    const result = await resolveTarget(client, [
+      `https://docz.zhenguanyu.com/spaces/${SID}`,
+    ]);
+    expect(result.spaceId).toBe(SID);
+    expect(result.path).toBe('');
+  });
+
+  it('resolves /spaces/{spaceId}/path (legacy with path)', async () => {
+    const result = await resolveTarget(client, [
+      `https://docz.zhenguanyu.com/spaces/${SID}/docs/guide.md`,
+    ]);
+    expect(result.spaceId).toBe(SID);
+    expect(result.path).toBe('docs/guide.md');
+  });
+
+  // --- fallback to parseTarget ---
   it('falls back to parseTarget for non-URL input', async () => {
     const result = await resolveTarget(client, ['研发:docs/guide.md']);
     expect(result.spaceId).toBe(SID);
@@ -184,44 +260,13 @@ describe('resolveTarget', () => {
     expect(result.path).toBe('');
   });
 
+  // --- error cases ---
   it('throws on unknown slug in short URL', async () => {
     await expect(
       resolveTarget(client, [
         'https://docz.zhenguanyu.com/s/nonexistent/f/NNjrcj8c',
       ])
     ).rejects.toThrow();
-  });
-
-  it('throws on unknown fileId in short URL', async () => {
-    await expect(
-      resolveTarget(client, [
-        'https://docz.zhenguanyu.com/s/yanhongkang/f/BADID',
-      ])
-    ).rejects.toThrow();
-  });
-
-  it('works with http:// (not just https://)', async () => {
-    const result = await resolveTarget(client, [
-      'http://docz.zhenguanyu.com/s/yanfa',
-    ]);
-    expect(result.spaceId).toBe(SID);
-    expect(result.path).toBe('');
-  });
-
-  it('strips #fragment from fileId in short URL', async () => {
-    const result = await resolveTarget(client, [
-      'https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c#section-2',
-    ]);
-    expect(result.spaceId).toBe('space-priv');
-    expect(result.path).toBe('docs/guide.md');
-  });
-
-  it('strips #fragment from slug-only URL', async () => {
-    const result = await resolveTarget(client, [
-      'https://docz.zhenguanyu.com/s/yanfa#readme',
-    ]);
-    expect(result.spaceId).toBe(SID);
-    expect(result.path).toBe('');
   });
 
   it('throws on unrecognized URL instead of falling through', async () => {
@@ -234,6 +279,15 @@ describe('resolveTarget', () => {
     await expect(
       resolveTarget(client, ['https://example.com/some/page'])
     ).rejects.toThrow('Unrecognized DocSync URL');
+  });
+
+  // --- protocol ---
+  it('works with http:// (not just https://)', async () => {
+    const result = await resolveTarget(client, [
+      'http://docz.zhenguanyu.com/s/yanfa',
+    ]);
+    expect(result.spaceId).toBe(SID);
+    expect(result.path).toBe('');
   });
 });
 
@@ -266,6 +320,22 @@ describe('resolveSpaceArg', () => {
     const s = await resolveSpaceArg(
       client,
       'https://docz.zhenguanyu.com/s/yanfa'
+    );
+    expect(s.id).toBe(SID);
+  });
+
+  it('extracts space from /s/{slug}/path URL', async () => {
+    const s = await resolveSpaceArg(
+      client,
+      'https://docz.zhenguanyu.com/s/yanfa/docs/guide.md'
+    );
+    expect(s.id).toBe(SID);
+  });
+
+  it('extracts space from /spaces/{id}/path legacy URL', async () => {
+    const s = await resolveSpaceArg(
+      client,
+      `https://docz.zhenguanyu.com/spaces/${SID}/docs/guide.md`
     );
     expect(s.id).toBe(SID);
   });

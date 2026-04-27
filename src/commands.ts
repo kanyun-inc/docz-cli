@@ -46,37 +46,8 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// Short URL patterns: /s/{slug}/f/{fileId} or /s/{slug}
-const SHORT_URL_RE = /\/s\/([^/]+)\/f\/([^/?\s#]+)/;
-const SLUG_ONLY_RE = /\/s\/([^/?\s#]+)\/?(?:[?#].*)?$/;
 // Share URL: /share/{token}
 const SHARE_URL_RE = /\/share\/([^/?\s]+)/;
-
-/**
- * Detect if input is a URL and resolve it to { spaceId, path }.
- * Returns null if not a URL.
- */
-async function resolveUrl(
-  client: DocSyncClient,
-  input: string
-): Promise<{ spaceId: string; path: string } | null> {
-  // Match /s/{slug}/f/{fileId}
-  const fileMatch = input.match(SHORT_URL_RE);
-  if (fileMatch) {
-    const [, slug, fileId] = fileMatch;
-    const space = await resolveSlug(client, slug);
-    const ref = await client.resolveFileRef(fileId);
-    return { spaceId: space.id, path: ref.path };
-  }
-  // Match /s/{slug} (directory listing)
-  const slugMatch = input.match(SLUG_ONLY_RE);
-  if (slugMatch) {
-    const [, slug] = slugMatch;
-    const space = await resolveSlug(client, slug);
-    return { spaceId: space.id, path: '' };
-  }
-  return null;
-}
 
 /** Resolve slug: try local spaces cache first, then API */
 async function resolveSlug(
@@ -94,7 +65,55 @@ async function resolveSlug(
 }
 
 /**
- * Resolve target: if it's a short URL, resolve it; otherwise use parseTarget + resolveSpace.
+ * Detect if input is a URL and resolve it to { spaceId, path }.
+ * Supports:
+ *   /s/{slug}/f/{fileId}         — short URL with fileId
+ *   /s/{slug}[/path/to/file]     — slug URL with optional path
+ *   /spaces/{spaceId}[/path/...] — legacy URL
+ * Returns null if not a recognized DocSync URL.
+ */
+async function resolveUrl(
+  client: DocSyncClient,
+  input: string
+): Promise<{ spaceId: string; path: string } | null> {
+  let pathname: string;
+  try {
+    pathname = new URL(input).pathname;
+  } catch {
+    return null;
+  }
+
+  // /s/{slug}/f/{fileId}
+  const fileMatch = pathname.match(/^\/s\/([^/]+)\/f\/([^/]+)$/);
+  if (fileMatch) {
+    const [, slug, fileId] = fileMatch;
+    const space = await resolveSlug(client, slug);
+    const ref = await client.resolveFileRef(fileId);
+    return { spaceId: space.id, path: ref.path };
+  }
+
+  // /s/{slug}[/path/to/file]
+  const slugMatch = pathname.match(/^\/s\/([^/]+)(\/.*)?$/);
+  if (slugMatch) {
+    const [, slug, rest] = slugMatch;
+    const space = await resolveSlug(client, slug);
+    const filePath = rest ? decodeURIComponent(rest.slice(1)) : '';
+    return { spaceId: space.id, path: filePath };
+  }
+
+  // /spaces/{spaceId}[/path/to/file] (legacy)
+  const legacyMatch = pathname.match(/^\/spaces\/([^/]+)(\/.*)?$/);
+  if (legacyMatch) {
+    const [, spaceId, rest] = legacyMatch;
+    const filePath = rest ? decodeURIComponent(rest.slice(1)) : '';
+    return { spaceId, path: filePath };
+  }
+
+  return null;
+}
+
+/**
+ * Resolve target: if it's a URL, resolve it; otherwise use parseTarget + resolveSpace.
  */
 export async function resolveTarget(
   client: DocSyncClient,
@@ -105,7 +124,7 @@ export async function resolveTarget(
     const result = await resolveUrl(client, first);
     if (result) return result;
     throw new Error(
-      `Unrecognized DocSync URL: ${first}\nExpected format: https://docz.zhenguanyu.com/s/{slug}/f/{fileId} or /s/{slug}`
+      `Unrecognized DocSync URL: ${first}\nExpected: /s/{slug}[/f/{fileId}], /s/{slug}[/path], or /spaces/{id}[/path]`
     );
   }
   const { space, path } = parseTarget(args);
@@ -113,21 +132,19 @@ export async function resolveTarget(
   return { spaceId: s.id, path };
 }
 
-const SLUG_FROM_URL_RE = /\/s\/([^/?\s#]+)/;
-
 /**
- * Resolve a space argument that may be a name, UUID, or short URL.
- * Extracts slug from URL and resolves to space; throws on unrecognized URL.
+ * Resolve a space argument that may be a name, UUID, or URL.
+ * For URLs, delegates to resolveUrl and extracts the spaceId.
  */
 export async function resolveSpaceArg(
   client: DocSyncClient,
   input: string
 ): Promise<{ id: string }> {
   if (input.startsWith('http://') || input.startsWith('https://')) {
-    const m = input.match(SLUG_FROM_URL_RE);
-    if (m) return resolveSlug(client, m[1]);
+    const result = await resolveUrl(client, input);
+    if (result) return { id: result.spaceId };
     throw new Error(
-      `Unrecognized DocSync URL: ${input}\nExpected format: https://docz.zhenguanyu.com/s/{slug}[/f/{fileId}]`
+      `Unrecognized DocSync URL: ${input}\nExpected: /s/{slug}[/f/{fileId}], /s/{slug}[/path], or /spaces/{id}[/path]`
     );
   }
   return client.resolveSpace(input);
