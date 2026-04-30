@@ -279,6 +279,25 @@ docz-cli wraps the DocSync REST API:
 
 Auth: `Authorization: Bearer <token>`. Backend is Git — every write is a commit.
 
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md). Quick version:
+
+```bash
+# New branch
+git checkout -b feature-xxx
+
+# Code + tests
+pnpm typecheck && pnpm lint && pnpm test && pnpm build
+
+# Add a changeset (skipping this means no release)
+pnpm changeset
+
+# Open a PR
+```
+
+Once merged into `main`, GitHub Actions automatically bumps the version and publishes to npm — no manual `npm publish`, no tag, no OTP.
+
 ## License
 
 MIT
