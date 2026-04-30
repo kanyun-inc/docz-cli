@@ -37,8 +37,7 @@
     "clean": "rm -rf dist node_modules",
     "changeset": "changeset",
     "version": "changeset version",
-    "release": "changeset publish",
-    "prepublishOnly": "npm run build"
+    "release": "pnpm build && changeset publish"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.28.0",

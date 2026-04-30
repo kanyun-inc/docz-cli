@@ -279,21 +279,24 @@ docz-cli wraps the DocSync REST API:
 
 Auth: `Authorization: Bearer <token>`. Backend is Git — every write is a commit.
 
-## Release
+## Contributing
 
-Versioning and publishing are automated via [changesets](https://github.com/changesets/changesets) and GitHub Actions.
-
-On a feature branch, add a changeset describing your change:
+See [CONTRIBUTING.md](./CONTRIBUTING.md). Quick version:
 
 ```bash
+# New branch
+git checkout -b feature-xxx
+
+# Code + tests
+pnpm typecheck && pnpm lint && pnpm test && pnpm build
+
+# Add a changeset (skipping this means no release)
 pnpm changeset
-# pick patch / minor / major + write a summary
-# commit the generated .changeset/*.md file in your PR
+
+# Open a PR
 ```
 
-After the PR is merged into `main`, the `Release` workflow opens (or updates) a **`chore: version packages`** PR that bumps `version`, updates `CHANGELOG.md`, and deletes the consumed changesets. Merging that PR triggers the same workflow to `npm publish`, push a `vX.Y.Z` tag, and create a GitHub Release.
-
-No local `npm publish` / OTP required. The workflow uses the repo secret `NPM_TOKEN` (an npm automation token scoped to `docz-cli`).
+Once merged into `main`, GitHub Actions automatically bumps the version and publishes to npm — no manual `npm publish`, no tag, no OTP.
 
 ## License
 

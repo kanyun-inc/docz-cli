@@ -4,4 +4,7 @@
 
 chore: automate release pipeline via changesets + GitHub Actions
 
-Pushes to `main` now open a "chore: version packages" PR that bumps the version and updates `CHANGELOG.md`; merging that PR triggers `npm publish`, git tag, and GitHub Release. See README "Release" section for the contributor workflow.
+- Push to `main` opens a "chore: version packages" PR; merging it triggers `npm publish`, git tag, and GitHub Release.
+- `feature-*` branches support beta pre-releases when `.changeset/pre.json` tag is `beta`.
+- CI workflow gates PRs and main pushes on typecheck / lint / test / build.
+- See CONTRIBUTING.md for the full contributor flow.
