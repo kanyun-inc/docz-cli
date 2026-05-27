@@ -1,7 +1,7 @@
 ---
 name: docz
-description: Read and write company DocSync documents. Triggers on "docs", "documents", "upload file", "read space", "docz", "DocSync", "save file", "rollback", "comment", "share link", "diff"
-version: 0.9.0
+description: Read and write company DocSync documents. Triggers on "docs", "documents", "upload file", "read space", "docz", "DocSync", "save file", "rollback", "restore", "trash", "version history", "comment", "share link", "diff"
+version: 0.10.0
 author: kris
 tags:
   - docsync
@@ -9,7 +9,7 @@ tags:
   - file-sync
   - knowledge
 user-invocable: true
-argument-hint: "spaces | ls <space> | cat <space>:<path> | write <space>:<path> '<text>' | comment list <space>:<path> | shortlink <space>:<path> | diff <space>:<path> <commit>"
+argument-hint: "spaces | whoami | ls <space> | cat <space>:<path> | write <space>:<path> '<text>' | upload <file> <space> | mkdir <space>:<path> | mv <space>:<from> <to> | rm <space>:<path> | log <space>[:<path>] | rollback <space>:<path> <commit> | trash <space> | restore <space>:<path> <commit> | comment list <space>:<path> | share create <space>:<path> | shortlink <space>:<path> | diff <space>[:<path>] <commit>"
 allowed-tools: Bash(*)
 ---
 
@@ -176,14 +176,11 @@ done | npx docz-cli@latest write G160-研发:full-report.md -
 - Prefer pipes over multiple round-trips. `cat | grep` is one operation, not two.
 - `cat` returns raw text — pipe to `head`, `tail`, `grep`, `awk`, `sed`, `wc`, `sort`, `uniq` as needed.
 - For CSV data, use `cut`, `awk`, and `sort`.
-- `write <path> -` accepts any stdin — command output, heredocs, pipe chains.
 - `write` overwrites the entire file (not append). To append, `cat` first, combine, then `write` back.
 - `write` has a 2MB limit. For larger files, use `upload`.
 - `write` detects concurrent edits automatically. If conflict occurs, re-read and retry.
 - `rm` moves to trash (recoverable for 30 days), not permanent delete. Use `trash` + `restore` to recover.
-- `rollback` reverts a file to a specific historical version (creates a new commit).
-- Backend is Git: every write creates a commit. Use `log` to see history, `diff` to see changes.
-- After writing a file, use `shortlink` to get a clickable URL for the user.
 - Text files (.md, .csv, .html) work with `cat`. Binary files (images, PDF) use `upload` only.
+- After writing a file, use `shortlink` to get a clickable URL for the user.
+- Backend is Git: every write creates a commit. Use `log` to see history, `diff` to see changes.
 - Any DocSync URL can be pasted directly into any command. Supports short URLs (`/s/slug/f/fileId`), path URLs (`/s/slug/path/to/file`), and legacy URLs (`/spaces/id/path`).
-- Share links let you share files with specific users or publicly, with optional expiry.
