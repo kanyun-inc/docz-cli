@@ -9,7 +9,7 @@ tags:
   - file-sync
   - knowledge
 user-invocable: true
-argument-hint: "spaces | whoami | ls <space> | cat <space>:<path> | write <space>:<path> '<text>' | upload <file> <space> | mkdir <space>:<path> | mv <space>:<from> <to> | rm <space>:<path> | log <space>[:<path>] | rollback <space>:<path> <commit> | trash <space> | restore <space>:<path> <commit> | comment list <space>:<path> | share create <space>:<path> | shortlink <space>:<path> | diff <space>[:<path>] <commit>"
+argument-hint: "spaces | whoami | ls/cat/write/upload/mkdir/mv/rm/log/rollback/trash/restore/shortlink/diff | comment <subcmd> | share <subcmd>"
 allowed-tools: Bash(*)
 ---
 
@@ -19,14 +19,20 @@ CLI tool `docz-cli` for reading and writing files in DocSync (docz.zhenguanyu.co
 
 ## Auth Check
 
-Before first use:
+Before first use, verify auth with:
 
 ```bash
-echo $DOCSYNC_API_TOKEN
+npx docz-cli@latest whoami
 ```
 
-- **Non-empty**: proceed
-- **Empty**: tell the user to create a token at https://docz.zhenguanyu.com/settings → Account → API Tokens → New Token, then configure it in Rush user environment variable settings
+- **Success**: proceed
+- **Failure**: tell the user to create a token at https://docz.zhenguanyu.com/settings → Account → API Tokens → New Token, then configure it:
+
+```bash
+npx docz-cli@latest login --token <your-token>
+# or
+export DOCSYNC_API_TOKEN=<your-token>
+```
 
 ## Addressing
 
@@ -34,7 +40,7 @@ All commands use `<space>:<path>`. The `<space>` segment accepts a space name, s
 
 **Space name resolution priority**: exact name > slug > suffix match (e.g. "研发" matches "G160-研发"). If suffix matches multiple spaces, CLI rejects with an ambiguity error.
 
-**Best practice**: When the user's working path contains a space name (e.g. `~/Docz/G160-研发/...`), use the directory name directly as the space name. When unsure, run `npx docz-cli@latest spaces` to list all available spaces.
+**Agent rule**: Prefer a full DocSync URL if the user provides one. If you need a space argument and are not certain of the exact name/slug/UUID, run `npx docz-cli@latest spaces` first. Do not invent, translate, or simplify space names. Suffix matching is only a CLI fallback, not the preferred form.
 
 ```
 G160-研发                    → root of space "G160-研发"
@@ -44,7 +50,9 @@ G160-研发:docs/guide.md      → specific file
 
 ### URL Support
 
-All commands accept DocSync URLs directly. Supported formats:
+Commands that take a `<space>` or `<space>:<path>` target accept DocSync URLs directly. `share cat` and `share info` accept share URLs separately. `login`, `whoami`, and `spaces` do not take document URLs.
+
+Supported DocSync URL formats:
 
 - **Short URL (fileId)**: `/s/{slug}/f/{fileId}` — resolves fileId to path via API
 - **Path URL**: `/s/{slug}/path/to/file.md` — file path in URL
@@ -89,11 +97,14 @@ npx docz-cli@latest write <space>:<path> -                # write from stdin
 npx docz-cli@latest write --force <space>:<path> '<text>' # skip conflict detection
 ```
 
-`write` automatically reads the current file version (ref) before saving. If the file was modified by someone else between read and write, a **409 Conflict** error is returned:
-```
-Error: file was modified by someone else. Please re-read the latest content and try again.
-```
-In this case, re-read the file with `cat`, re-apply changes, and `write` again. Content limit: **2MB** (use `upload` for larger files).
+**Safe edit workflow** — always follow this sequence to avoid overwriting concurrent edits:
+
+1. `cat <space>:<path>` — read current content
+2. Apply your changes locally
+3. `write <space>:<path> '<new content>'` — `write` re-fetches the file ref under the hood and rejects with **409 Conflict** if someone else has modified it in between
+4. On 409: go back to step 1 (re-read latest, re-apply changes, write again)
+
+Use `cat --ref` only if you need to display or log the Git ref; the safe-edit workflow above does not require it. Use `--force` only when you intentionally want to overwrite (e.g. fully regenerated content). Content limit: **2MB** — use `upload` for larger files.
 
 ### Version Management
 
