@@ -7,4 +7,5 @@ package-lock.json
 .claude
 skills.json
 skills.lock
+.DS_Store
 
