@@ -216,8 +216,7 @@ export class DocSyncClient {
     // 5: name suffix match (e.g. "研发" matches "G160-研发")
     const suffixMatches = spaces.filter(
       (s) =>
-        s.name.length > nameOrId.length &&
-        s.name.toLowerCase().endsWith(input)
+        s.name.length > nameOrId.length && s.name.toLowerCase().endsWith(input)
     );
     if (suffixMatches.length === 1) return suffixMatches[0];
     if (suffixMatches.length > 1) {
