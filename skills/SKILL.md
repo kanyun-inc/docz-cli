@@ -30,12 +30,16 @@ echo $DOCSYNC_API_TOKEN
 
 ## Addressing
 
-All commands use `<space>:<path>`. The `<space>` segment accepts a space name or UUID. When ambiguous, use `npx docz-cli@latest spaces` to verify, then use UUID.
+All commands use `<space>:<path>`. The `<space>` segment accepts a space name, slug, or UUID.
+
+**Space name resolution priority**: exact name > slug > suffix match (e.g. "研发" matches "G160-研发"). If suffix matches multiple spaces, CLI rejects with an ambiguity error.
+
+**Best practice**: When the user's working path contains a space name (e.g. `~/Docz/G160-研发/...`), use the directory name directly as the space name. When unsure, run `npx docz-cli@latest spaces` to list all available spaces.
 
 ```
-研发                    → root of space "研发"
-研发:docs               → subdirectory
-研发:docs/guide.md      → specific file
+G160-研发                    → root of space "G160-研发"
+G160-研发:docs               → subdirectory
+G160-研发:docs/guide.md      → specific file
 ```
 
 ### URL Support
@@ -126,9 +130,9 @@ npx docz-cli@latest share rm <space> <link-id>
 View what changed in a commit or compare two commits:
 
 ```bash
-npx docz-cli@latest diff 研发:docs/guide.md af0fb9b          # file-level diff
-npx docz-cli@latest diff 研发:docs/guide.md af0fb9b b2c3d4e  # compare two commits
-npx docz-cli@latest diff 研发 af0fb9b                         # space-level: which files changed
+npx docz-cli@latest diff G160-研发:docs/guide.md af0fb9b          # file-level diff
+npx docz-cli@latest diff G160-研发:docs/guide.md af0fb9b b2c3d4e  # compare two commits
+npx docz-cli@latest diff G160-研发 af0fb9b                         # space-level: which files changed
 ```
 
 ## Unix Pipes
@@ -137,15 +141,15 @@ npx docz-cli@latest diff 研发 af0fb9b                         # space-level: w
 
 **Search content:**
 ```bash
-npx docz-cli@latest cat 研发:docs/guide.md | grep -i "deploy"
-npx docz-cli@latest cat 研发:docs/guide.md | grep -n "TODO"
+npx docz-cli@latest cat G160-研发:docs/guide.md | grep -i "deploy"
+npx docz-cli@latest cat G160-研发:docs/guide.md | grep -n "TODO"
 ```
 
 **Extract and transform:**
 ```bash
-npx docz-cli@latest cat 研发:data.csv | cut -d',' -f1,3 | head -20
-npx docz-cli@latest cat 研发:data.csv | awk -F',' '$3 > 1000 {print $1, $3}'
-npx docz-cli@latest cat 研发:report.md | wc -l
+npx docz-cli@latest cat G160-研发:data.csv | cut -d',' -f1,3 | head -20
+npx docz-cli@latest cat G160-研发:data.csv | awk -F',' '$3 > 1000 {print $1, $3}'
+npx docz-cli@latest cat G160-研发:report.md | wc -l
 ```
 
 **Read → process → write back:**
@@ -162,8 +166,8 @@ cat local-file.md | npx docz-cli@latest write 吴鹏飞:docs/remote.md -
 **Combine multiple files:**
 ```bash
 for f in intro.md body.md conclusion.md; do
-  npx docz-cli@latest cat 研发:chapters/$f
-done | npx docz-cli@latest write 研发:full-report.md -
+  npx docz-cli@latest cat G160-研发:chapters/$f
+done | npx docz-cli@latest write G160-研发:full-report.md -
 ```
 
 ## Tips

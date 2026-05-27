@@ -198,17 +198,39 @@ export class DocSyncClient {
 
   async resolveSpace(nameOrId: string): Promise<Space> {
     const spaces = await this.listSpaces();
-    const s = spaces.find(
+    const input = nameOrId.toLowerCase();
+
+    // 1-3: exact id / exact name / case-insensitive name
+    const exact = spaces.find(
       (s) =>
         s.id === nameOrId ||
         s.name === nameOrId ||
-        s.name.toLowerCase() === nameOrId.toLowerCase()
+        s.name.toLowerCase() === input
     );
-    if (!s) {
-      const available = spaces.map((s) => s.name).join(', ');
-      throw new Error(`Space "${nameOrId}" not found. Available: ${available}`);
+    if (exact) return exact;
+
+    // 4: slug exact match
+    const bySlug = spaces.find((s) => s.slug === nameOrId);
+    if (bySlug) return bySlug;
+
+    // 5: name suffix match (e.g. "研发" matches "G160-研发")
+    const suffixMatches = spaces.filter(
+      (s) =>
+        s.name.length > nameOrId.length &&
+        s.name.toLowerCase().endsWith(input)
+    );
+    if (suffixMatches.length === 1) return suffixMatches[0];
+    if (suffixMatches.length > 1) {
+      const candidates = suffixMatches.map((s) => s.name).join(', ');
+      throw new Error(
+        `Space "${nameOrId}" is ambiguous, matches: ${candidates}. Use the full name or UUID.`
+      );
     }
-    return s;
+
+    const available = spaces
+      .map((s) => (s.slug ? `${s.name} (${s.slug})` : s.name))
+      .join(', ');
+    throw new Error(`Space "${nameOrId}" not found. Available: ${available}`);
   }
 
   // --- Tree ---

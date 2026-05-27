@@ -10,7 +10,8 @@ const SID = 'space-abc';
 const mockSpaces = [
   {
     id: SID,
-    name: '研发',
+    name: 'G160-研发',
+    slug: 'yanfa',
     owner_id: 'u1',
     is_private: false,
     created_at: '2026-03-24T09:00:00Z',
@@ -19,6 +20,7 @@ const mockSpaces = [
   {
     id: 'space-priv',
     name: '吴鹏飞',
+    slug: 'wupengfei',
     owner_id: 'u2',
     is_private: true,
     created_at: '2026-03-27T09:00:00Z',
@@ -57,7 +59,7 @@ const mockShareLink = {
 const mockShareFileInfo = {
   file_path: 'README.md',
   file_name: 'README.md',
-  space_name: '研发',
+  space_name: 'G160-研发',
   created_by_name: '测试用户',
   expires_at: null,
 };
@@ -356,13 +358,43 @@ describe('DocSyncClient', () => {
   });
 
   it('resolveSpace() by name', async () => {
-    const s = await c.resolveSpace('研发');
+    const s = await c.resolveSpace('G160-研发');
     expect(s.id).toBe(SID);
   });
 
   it('resolveSpace() by id', async () => {
     const s = await c.resolveSpace(SID);
     expect(s.id).toBe(SID);
+  });
+
+  it('resolveSpace() by slug', async () => {
+    const s = await c.resolveSpace('yanfa');
+    expect(s.id).toBe(SID);
+  });
+
+  it('resolveSpace() by name suffix', async () => {
+    const s = await c.resolveSpace('研发');
+    expect(s.id).toBe(SID);
+  });
+
+  it('resolveSpace() throws on ambiguous suffix', async () => {
+    server.use(
+      http.get(`${BASE}/api/spaces`, () =>
+        HttpResponse.json([
+          ...mockSpaces,
+          {
+            id: 'space-s160',
+            name: 'S160-研发',
+            slug: 'yanfa-s',
+            owner_id: 'u3',
+            is_private: true,
+            created_at: '2026-04-01T09:00:00Z',
+            member_count: 10,
+          },
+        ])
+      )
+    );
+    await expect(c.resolveSpace('研发')).rejects.toThrow('ambiguous');
   });
 
   it('resolveSpace() throws on unknown', async () => {
@@ -554,7 +586,7 @@ describe('DocSyncClient', () => {
   it('getSharedFileInfo() returns info', async () => {
     const info = await c.getSharedFileInfo('xYz123AbC');
     expect(info.file_path).toBe('README.md');
-    expect(info.space_name).toBe('研发');
+    expect(info.space_name).toBe('G160-研发');
     expect(info.created_by_name).toBe('测试用户');
   });
 
