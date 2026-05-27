@@ -237,7 +237,7 @@ export function registerCommands(program: Command): void {
       for (const s of spaces) {
         const tag = s.is_private ? 'private' : 'team';
         console.log(
-          `${s.name}\t${s.slug ?? ''}\t${tag}\t${s.member_count} members\t${s.id}`
+          `${s.name}\t${tag}\t${s.member_count} members\t${s.id}\t${s.slug ?? ''}`
         );
       }
     });

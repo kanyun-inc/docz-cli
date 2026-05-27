@@ -75,7 +75,7 @@ export DOCSYNC_API_TOKEN=<your-token>
 |---------|-------------|
 | `login --token <t>` | Configure credentials |
 | `whoami` | Show current user |
-| `spaces` | List all accessible spaces (name, slug, type, members, UUID) |
+| `spaces` | List all accessible spaces (name, type, members, UUID, slug) |
 | `ls <space>[:<path>]` | List files and folders |
 | `cat <space>:<path>` | Read file content |
 | `upload <file> <space>[:<dir>]` | Upload local file |
