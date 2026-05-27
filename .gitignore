@@ -4,3 +4,7 @@ dist/
 .env
 /.idea
 package-lock.json
+.claude
+skills.json
+skills.lock
+
