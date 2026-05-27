@@ -179,9 +179,9 @@ chore: bump dependencies
 
 lockfile 漂移了。本地 `pnpm install`，把 `pnpm-lock.yaml` 一起提交。
 
-### 发版 workflow 报 `NPM_TOKEN` 错误
+### 发版 workflow 报 npm 认证错误
 
-Maintainer 需要在仓库 Settings → Secrets → Actions 配 npm automation token。贡献者不用关心。
+本仓库使用 npm Trusted Publisher（OIDC），不再依赖 `NPM_TOKEN`。如果 publish 步骤报认证错误，maintainer 需要去 npm 包页面 → Settings → Trusted Publishers，确认绑定的仓库（`kanyun-inc/docz-cli`）和 workflow 文件名（`publish.yml`）正确。贡献者不用关心。
 
 ### 本地预览一下发版效果
 
