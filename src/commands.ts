@@ -236,7 +236,9 @@ export function registerCommands(program: Command): void {
       const spaces = await client.listSpaces();
       for (const s of spaces) {
         const tag = s.is_private ? 'private' : 'team';
-        console.log(`${s.name}\t${tag}\t${s.member_count} members\t${s.id}`);
+        console.log(
+          `${s.name}\t${tag}\t${s.member_count} members\t${s.id}\t${s.slug ?? ''}`
+        );
       }
     });
 

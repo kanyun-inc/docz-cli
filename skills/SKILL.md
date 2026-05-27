@@ -1,7 +1,7 @@
 ---
 name: docz
-description: Read and write company DocSync documents. Triggers on "docs", "documents", "upload file", "read space", "docz", "DocSync", "save file", "rollback", "comment", "share link", "diff"
-version: 0.9.0
+description: Read and write company DocSync documents. Triggers on "docs", "documents", "upload file", "read space", "docz", "DocSync", "save file", "rollback", "restore", "trash", "version history", "comment", "share link", "diff"
+version: 0.10.0
 author: kris
 tags:
   - docsync
@@ -9,7 +9,7 @@ tags:
   - file-sync
   - knowledge
 user-invocable: true
-argument-hint: "spaces | ls <space> | cat <space>:<path> | write <space>:<path> '<text>' | comment list <space>:<path> | shortlink <space>:<path> | diff <space>:<path> <commit>"
+argument-hint: "spaces | whoami | ls/cat/write/upload/mkdir/mv/rm/log/rollback/trash/restore/shortlink/diff | comment <subcmd> | share <subcmd>"
 allowed-tools: Bash(*)
 ---
 
@@ -19,28 +19,40 @@ CLI tool `docz-cli` for reading and writing files in DocSync (docz.zhenguanyu.co
 
 ## Auth Check
 
-Before first use:
+Before first use, verify auth with:
 
 ```bash
-echo $DOCSYNC_API_TOKEN
+npx docz-cli@latest whoami
 ```
 
-- **Non-empty**: proceed
-- **Empty**: tell the user to create a token at https://docz.zhenguanyu.com/settings → Account → API Tokens → New Token, then configure it in Rush user environment variable settings
+- **Success**: proceed
+- **Failure**: tell the user to create a token at https://docz.zhenguanyu.com/settings → Account → API Tokens → New Token, then configure it:
+
+```bash
+npx docz-cli@latest login --token <your-token>
+# or
+export DOCSYNC_API_TOKEN=<your-token>
+```
 
 ## Addressing
 
-All commands use `<space>:<path>`. The `<space>` segment accepts a space name or UUID. When ambiguous, use `npx docz-cli@latest spaces` to verify, then use UUID.
+All commands use `<space>:<path>`. The `<space>` segment accepts a space name, slug, or UUID.
+
+**Space name resolution priority**: exact name > slug > suffix match (e.g. "研发" matches "G160-研发"). If suffix matches multiple spaces, CLI rejects with an ambiguity error.
+
+**Agent rule**: Prefer a full DocSync URL if the user provides one. If you need a space argument and are not certain of the exact name/slug/UUID, run `npx docz-cli@latest spaces` first. Do not invent, translate, or simplify space names. Suffix matching is only a CLI fallback, not the preferred form.
 
 ```
-研发                    → root of space "研发"
-研发:docs               → subdirectory
-研发:docs/guide.md      → specific file
+G160-研发                    → root of space "G160-研发"
+G160-研发:docs               → subdirectory
+G160-研发:docs/guide.md      → specific file
 ```
 
 ### URL Support
 
-All commands accept DocSync URLs directly. Supported formats:
+Commands that take a `<space>` or `<space>:<path>` target accept DocSync URLs directly. `share cat` and `share info` accept share URLs separately. `login`, `whoami`, and `spaces` do not take document URLs.
+
+Supported DocSync URL formats:
 
 - **Short URL (fileId)**: `/s/{slug}/f/{fileId}` — resolves fileId to path via API
 - **Path URL**: `/s/{slug}/path/to/file.md` — file path in URL
@@ -85,11 +97,14 @@ npx docz-cli@latest write <space>:<path> -                # write from stdin
 npx docz-cli@latest write --force <space>:<path> '<text>' # skip conflict detection
 ```
 
-`write` automatically reads the current file version (ref) before saving. If the file was modified by someone else between read and write, a **409 Conflict** error is returned:
-```
-Error: file was modified by someone else. Please re-read the latest content and try again.
-```
-In this case, re-read the file with `cat`, re-apply changes, and `write` again. Content limit: **2MB** (use `upload` for larger files).
+**Safe edit workflow** — always follow this sequence to avoid overwriting concurrent edits:
+
+1. `cat <space>:<path>` — read current content
+2. Apply your changes locally
+3. `write <space>:<path> '<new content>'` — `write` re-fetches the file ref under the hood and rejects with **409 Conflict** if someone else has modified it in between
+4. On 409: go back to step 1 (re-read latest, re-apply changes, write again)
+
+Use `cat --ref` only if you need to display or log the Git ref; the safe-edit workflow above does not require it. Use `--force` only when you intentionally want to overwrite (e.g. fully regenerated content). Content limit: **2MB** — use `upload` for larger files.
 
 ### Version Management
 
@@ -126,9 +141,9 @@ npx docz-cli@latest share rm <space> <link-id>
 View what changed in a commit or compare two commits:
 
 ```bash
-npx docz-cli@latest diff 研发:docs/guide.md af0fb9b          # file-level diff
-npx docz-cli@latest diff 研发:docs/guide.md af0fb9b b2c3d4e  # compare two commits
-npx docz-cli@latest diff 研发 af0fb9b                         # space-level: which files changed
+npx docz-cli@latest diff G160-研发:docs/guide.md af0fb9b          # file-level diff
+npx docz-cli@latest diff G160-研发:docs/guide.md af0fb9b b2c3d4e  # compare two commits
+npx docz-cli@latest diff G160-研发 af0fb9b                         # space-level: which files changed
 ```
 
 ## Unix Pipes
@@ -137,15 +152,15 @@ npx docz-cli@latest diff 研发 af0fb9b                         # space-level: w
 
 **Search content:**
 ```bash
-npx docz-cli@latest cat 研发:docs/guide.md | grep -i "deploy"
-npx docz-cli@latest cat 研发:docs/guide.md | grep -n "TODO"
+npx docz-cli@latest cat G160-研发:docs/guide.md | grep -i "deploy"
+npx docz-cli@latest cat G160-研发:docs/guide.md | grep -n "TODO"
 ```
 
 **Extract and transform:**
 ```bash
-npx docz-cli@latest cat 研发:data.csv | cut -d',' -f1,3 | head -20
-npx docz-cli@latest cat 研发:data.csv | awk -F',' '$3 > 1000 {print $1, $3}'
-npx docz-cli@latest cat 研发:report.md | wc -l
+npx docz-cli@latest cat G160-研发:data.csv | cut -d',' -f1,3 | head -20
+npx docz-cli@latest cat G160-研发:data.csv | awk -F',' '$3 > 1000 {print $1, $3}'
+npx docz-cli@latest cat G160-研发:report.md | wc -l
 ```
 
 **Read → process → write back:**
@@ -162,8 +177,8 @@ cat local-file.md | npx docz-cli@latest write 吴鹏飞:docs/remote.md -
 **Combine multiple files:**
 ```bash
 for f in intro.md body.md conclusion.md; do
-  npx docz-cli@latest cat 研发:chapters/$f
-done | npx docz-cli@latest write 研发:full-report.md -
+  npx docz-cli@latest cat G160-研发:chapters/$f
+done | npx docz-cli@latest write G160-研发:full-report.md -
 ```
 
 ## Tips
@@ -172,14 +187,11 @@ done | npx docz-cli@latest write 研发:full-report.md -
 - Prefer pipes over multiple round-trips. `cat | grep` is one operation, not two.
 - `cat` returns raw text — pipe to `head`, `tail`, `grep`, `awk`, `sed`, `wc`, `sort`, `uniq` as needed.
 - For CSV data, use `cut`, `awk`, and `sort`.
-- `write <path> -` accepts any stdin — command output, heredocs, pipe chains.
 - `write` overwrites the entire file (not append). To append, `cat` first, combine, then `write` back.
 - `write` has a 2MB limit. For larger files, use `upload`.
 - `write` detects concurrent edits automatically. If conflict occurs, re-read and retry.
 - `rm` moves to trash (recoverable for 30 days), not permanent delete. Use `trash` + `restore` to recover.
-- `rollback` reverts a file to a specific historical version (creates a new commit).
-- Backend is Git: every write creates a commit. Use `log` to see history, `diff` to see changes.
-- After writing a file, use `shortlink` to get a clickable URL for the user.
 - Text files (.md, .csv, .html) work with `cat`. Binary files (images, PDF) use `upload` only.
+- After writing a file, use `shortlink` to get a clickable URL for the user.
+- Backend is Git: every write creates a commit. Use `log` to see history, `diff` to see changes.
 - Any DocSync URL can be pasted directly into any command. Supports short URLs (`/s/slug/f/fileId`), path URLs (`/s/slug/path/to/file`), and legacy URLs (`/spaces/id/path`).
-- Share links let you share files with specific users or publicly, with optional expiry.

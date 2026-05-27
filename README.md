@@ -19,8 +19,8 @@ npx docz-cli@latest login --token <your-token>
 
 # Browse
 npx docz-cli@latest spaces
-npx docz-cli@latest ls 研发
-npx docz-cli@latest cat 研发:docs/guide.md
+npx docz-cli@latest ls G160-研发
+npx docz-cli@latest cat G160-研发:docs/guide.md
 
 # Write
 npx docz-cli@latest write 吴鹏飞:notes/todo.md '# TODO List'
@@ -28,7 +28,7 @@ npx docz-cli@latest write 吴鹏飞:notes/todo.md '# TODO List'
 
 ## Features
 
-- **Simple addressing** — `<space>:<path>` format, Space supports name or ID
+- **Simple addressing** — `<space>:<path>` format, Space supports name, slug, or UUID (suffix match: "研发" → "G160-研发")
 - **Short URL support** — paste `https://docz.xxx.com/s/slug/f/fileId` directly into cat/ls/log, or generate with `shortlink`
 - **Full file operations** — ls, cat, upload, write, mkdir, rm, mv
 - **Share links** — create, list, update, access, delete share links from CLI
@@ -75,7 +75,7 @@ export DOCSYNC_API_TOKEN=<your-token>
 |---------|-------------|
 | `login --token <t>` | Configure credentials |
 | `whoami` | Show current user |
-| `spaces` | List all accessible spaces |
+| `spaces` | List all accessible spaces (name, type, members, UUID, slug) |
 | `ls <space>[:<path>]` | List files and folders |
 | `cat <space>:<path>` | Read file content |
 | `upload <file> <space>[:<dir>]` | Upload local file |
@@ -84,9 +84,16 @@ export DOCSYNC_API_TOKEN=<your-token>
 | `rm <space>:<path>` | Delete file/folder (30-day trash) |
 | `mv <space>:<from> <to>` | Rename or move |
 | `log <space>[:<path>]` | Show change history |
+| `rollback <space>:<path> <commit>` | Rollback file to a specific commit |
 | `shortlink <space>:<path>` | Get short URL for file |
 | `trash <space>` | Show deleted files |
+| `restore <space>:<path> <commit>` | Restore file from trash |
 | `diff <space>[:<path>] <commit> [<from>]` | Show changes (file or space level) |
+| `comment list <space>:<path>` | List comments on a file |
+| `comment add <space>:<path> <msg>` | Add comment to a file |
+| `comment reply <space> <id> <msg>` | Reply to a comment |
+| `comment close <space> <id>` | Close a comment |
+| `comment rm <space> <id>` | Delete a comment |
 | `share create <space>:<path>` | Create share link |
 | `share list <space>` | List share links |
 | `share update <space> <link-id>` | Update share link |
@@ -100,22 +107,25 @@ export DOCSYNC_API_TOKEN=<your-token>
 ### Browse
 
 ```bash
-docz-cli spaces                    # List all spaces
-docz-cli ls 研发                    # List root directory
-docz-cli ls 研发:docs               # List subdirectory
-docz-cli cat 研发:docs/guide.md     # Read file content
+docz-cli whoami                         # Show current user info
+docz-cli spaces                         # List all spaces (with slug)
+docz-cli ls G160-研发                    # List root directory
+docz-cli ls G160-研发:docs               # List subdirectory
+docz-cli ls -R G160-研发                 # List all files recursively
+docz-cli cat G160-研发:docs/guide.md     # Read file content
+docz-cli cat --ref G160-研发:docs/guide.md  # Read file + show git ref
 ```
 
 ### Short URL
 
-Generate a short URL for any file, or paste existing short URLs into cat/ls/log:
+Generate a short URL for any file, or paste existing short URLs directly into any command:
 
 ```bash
 # Generate short URL
 docz-cli shortlink 闫洪康:AI-Coding技巧总结12.md
 # → https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c
 
-# Short URLs work with cat, ls, log
+# Short URLs work with cat, ls, log, diff, rm, etc.
 docz-cli cat https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c
 docz-cli ls https://docz.zhenguanyu.com/s/yanfa
 docz-cli log https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c
@@ -125,30 +135,43 @@ docz-cli log https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c
 
 ```bash
 docz-cli write 吴鹏飞:notes/todo.md '# TODO List'                    # Write content
+docz-cli write --force 吴鹏飞:notes/todo.md '# Updated'              # Skip conflict detection
 echo '# Report' | docz-cli write 吴鹏飞:reports/daily.md -            # From stdin
-docz-cli upload ./report.pdf 研发:reports                              # Upload file
-docz-cli mkdir 研发:new-project                                        # Create folder
+docz-cli upload ./report.pdf G160-研发:reports                         # Upload file
+docz-cli mkdir G160-研发:new-project                                   # Create folder
 ```
 
 ### Manage
 
 ```bash
-docz-cli mv 研发:old.md new.md         # Rename
-docz-cli rm 研发:deprecated.md          # Delete (recoverable)
-docz-cli log 研发                        # Space history
-docz-cli log 研发:docs/guide.md         # File history
-docz-cli trash 研发                      # View trash
+docz-cli mv G160-研发:old.md new.md              # Rename
+docz-cli rm G160-研发:deprecated.md               # Delete (recoverable for 30 days)
+docz-cli log G160-研发                             # Space history
+docz-cli log G160-研发:docs/guide.md              # File history
+docz-cli rollback G160-研发:docs/guide.md abc1234  # Rollback file to a specific commit
+docz-cli trash G160-研发                           # View deleted files
+docz-cli restore G160-研发:deleted.md del1234      # Restore file from trash
+```
+
+### Comments
+
+```bash
+docz-cli comment list G160-研发:docs/guide.md             # List comments on a file
+docz-cli comment add G160-研发:docs/guide.md '需要补充说明'  # Add comment
+docz-cli comment reply G160-研发 42 '已补充'               # Reply to comment #42
+docz-cli comment close G160-研发 42                        # Close comment #42
+docz-cli comment rm G160-研发 42                           # Delete comment #42
 ```
 
 ### Share Links
 
 ```bash
 # Create (with optional expiry and visibility)
-docz-cli share create 研发:docs/guide.md --expires 7d --users user@co.com
+docz-cli share create G160-研发:docs/guide.md --expires 7d --users user@co.com
 
 # List all share links in a space
-docz-cli share list 研发
-docz-cli share list 研发 --file docs/guide.md    # Filter by file
+docz-cli share list G160-研发
+docz-cli share list G160-研发 --file docs/guide.md    # Filter by file
 
 # Access shared content (token or full URL)
 docz-cli share cat xYz123AbC
@@ -159,25 +182,25 @@ docz-cli share cat xYz123AbC --raw | grep "部署"  # Raw output for pipes
 docz-cli share info xYz123AbC
 
 # Update and delete (requires space context)
-docz-cli share update 研发 <link-id> --expires 30d
-docz-cli share rm 研发 <link-id>
+docz-cli share update G160-研发 <link-id> --expires 30d
+docz-cli share rm G160-研发 <link-id>
 ```
 
 ### Diff
 
 ```bash
 # View what changed in a commit (file level)
-docz-cli diff 研发:docs/guide.md af0fb9b
+docz-cli diff G160-研发:docs/guide.md af0fb9b
 
 # Compare two commits
-docz-cli diff 研发:docs/guide.md af0fb9b b2c3d4e
+docz-cli diff G160-研发:docs/guide.md af0fb9b b2c3d4e
 
 # Space-level: which files changed in a commit
-docz-cli diff 研发 af0fb9b
+docz-cli diff G160-研发 af0fb9b
 
 # Typical workflow: log → pick commit → diff
-docz-cli log 研发:docs/guide.md
-docz-cli diff 研发:docs/guide.md af0fb9b
+docz-cli log G160-研发:docs/guide.md
+docz-cli diff G160-研发:docs/guide.md af0fb9b
 ```
 
 ### Pipes
@@ -186,10 +209,10 @@ docz-cli diff 研发:docs/guide.md af0fb9b
 
 ```bash
 # Search content
-docz-cli cat 研发:docs/guide.md | grep "部署"
+docz-cli cat G160-研发:docs/guide.md | grep "部署"
 
 # Extract CSV columns
-docz-cli cat 研发:data.csv | cut -d',' -f1,3 | head -10
+docz-cli cat G160-研发:data.csv | cut -d',' -f1,3 | head -10
 
 # Read → transform → write back
 docz-cli cat 吴鹏飞:config.md | sed 's/old/new/g' | docz-cli write 吴鹏飞:config.md -
@@ -261,13 +284,20 @@ docz-cli wraps the DocSync REST API:
 | `spaces` | `GET /api/spaces` |
 | `ls` | `GET /api/spaces/{id}/tree?path=` |
 | `cat` | `GET /api/spaces/{id}/blob/{path}` |
-| `upload` / `write` | `POST /api/spaces/{id}/files/upload` |
+| `upload` / `write` | `POST /api/spaces/{id}/files/upload` or `POST /api/spaces/{id}/files/save` |
 | `mkdir` | `POST /api/spaces/{id}/files/mkdir` |
 | `rm` | `POST /api/spaces/{id}/files/delete` |
 | `mv` | `POST /api/spaces/{id}/files/rename` |
 | `log` | `GET /api/spaces/{id}/log/[{path}]` |
+| `rollback` | `POST /api/spaces/{id}/files/rollback` |
 | `trash` | `GET /api/spaces/{id}/trash` |
+| `restore` | `POST /api/spaces/{id}/trash/restore` |
 | `diff` | `GET /api/spaces/{id}/diff/[{path}]?from=&to=` |
+| `comment list` | `GET /api/spaces/{id}/comments?path=` |
+| `comment add` | `POST /api/spaces/{id}/comments` |
+| `comment reply` | `POST /api/spaces/{id}/comments/{commentId}/replies` |
+| `comment close` | `PUT /api/spaces/{id}/comments/{commentId}` |
+| `comment rm` | `DELETE /api/spaces/{id}/comments/{commentId}` |
 | `share create` | `POST /api/spaces/{id}/share-links` |
 | `share list` | `GET /api/spaces/{id}/share-links` |
 | `share update` | `PUT /api/spaces/{id}/share-links/{linkId}` |
