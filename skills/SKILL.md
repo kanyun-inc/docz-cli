@@ -120,6 +120,7 @@ npx docz-cli@latest restore <space>:<path> <commit>       # restore deleted file
 ```bash
 npx docz-cli@latest comment list <space>:<path>           # list comments on a file
 npx docz-cli@latest comment add <space>:<path> '<msg>'    # add comment
+npx docz-cli@latest comment add <space>:<path> '<msg>' --quote '<text>'   # selection comment (highlighted in Web UI)
 npx docz-cli@latest comment reply <space> <id> '<msg>'    # reply to comment
 npx docz-cli@latest comment close <space> <id>            # close comment
 npx docz-cli@latest comment rm <space> <id>               # delete comment
@@ -195,3 +196,4 @@ done | npx docz-cli@latest write G160-研发:full-report.md -
 - After writing a file, use `shortlink` to get a clickable URL for the user.
 - Backend is Git: every write creates a commit. Use `log` to see history, `diff` to see changes.
 - Any DocSync URL can be pasted directly into any command. Supports short URLs (`/s/slug/f/fileId`), path URLs (`/s/slug/path/to/file`), and legacy URLs (`/spaces/id/path`).
+- `--quote` creates a selection comment: the quoted text is highlighted in Web UI. Copy the exact text from the file; use 10+ characters to avoid ambiguous matches.
