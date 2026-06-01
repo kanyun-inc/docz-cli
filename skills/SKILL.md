@@ -1,7 +1,7 @@
 ---
 name: docz
 description: Read and write company DocSync documents. Triggers on "docs", "documents", "upload file", "read space", "docz", "DocSync", "save file", "rollback", "restore", "trash", "version history", "comment", "share link", "diff"
-version: 0.11.0
+version: 0.12.0
 author: kris
 tags:
   - docsync
@@ -120,6 +120,10 @@ npx docz-cli@latest restore <space>:<path> <commit>       # restore deleted file
 ```bash
 npx docz-cli@latest comment list <space>:<path>           # list comments on a file
 npx docz-cli@latest comment add <space>:<path> '<msg>'    # add comment
+npx docz-cli@latest comment add <space>:<path> '<msg>' --quote '<text>'   # selection comment (highlighted in Web UI)
+# IMPORTANT: --quote must be plain text with all Markdown formatting removed.
+# The Web UI highlights by searching rendered text, so Markdown syntax (**, #, [](), etc.) won't match.
+# Example: if source is "**重要**的[设计文档](url)", quote should be "重要的设计文档".
 npx docz-cli@latest comment reply <space> <id> '<msg>'    # reply to comment
 npx docz-cli@latest comment close <space> <id>            # close comment
 npx docz-cli@latest comment rm <space> <id>               # delete comment
@@ -195,3 +199,4 @@ done | npx docz-cli@latest write G160-研发:full-report.md -
 - After writing a file, use `shortlink` to get a clickable URL for the user.
 - Backend is Git: every write creates a commit. Use `log` to see history, `diff` to see changes.
 - Any DocSync URL can be pasted directly into any command. Supports short URLs (`/s/slug/f/fileId`), path URLs (`/s/slug/path/to/file`), and legacy URLs (`/spaces/id/path`).
+- `--quote` creates a selection comment: the quoted text is highlighted in Web UI. The quote must be **plain text** (strip all Markdown formatting like `**`, `#`, `[]()`, `` ` `` before passing). Use 10+ characters to avoid ambiguous matches.

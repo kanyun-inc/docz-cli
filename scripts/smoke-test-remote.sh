@@ -235,9 +235,28 @@ if [ -n "$COMMENT_ID" ]; then
   fi
 fi
 
-# ── 17. rm ──
+# ── 17. selection comment (quote) ──
 echo ""
-echo "── 17. rm ──"
+echo "── 17. selection comment (quote) ──"
+SEL_RESP=$(rcurl "$BASE/api/spaces/$SPACE_ID/comments -X POST $AUTH -H 'Content-Type: application/json' -d '{\"file_path\":\"$TEST_FILE\",\"content\":\"selection comment test\",\"comment_type\":\"text\",\"target_type\":\"selection\",\"target_content\":\"Edited content\",\"target_selector\":\"{\\\"startOffset\\\":0,\\\"endOffset\\\":0,\\\"text\\\":\\\"Edited content\\\",\\\"prefix\\\":\\\"\\\",\\\"suffix\\\":\\\"\\\"}\"}'")
+SEL_ID=$(echo "$SEL_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null) || SEL_ID=""
+if [ -n "$SEL_ID" ]; then
+  ok "selection comment add: id=$SEL_ID"
+  SEL_TYPE=$(echo "$SEL_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('target_type',''))" 2>/dev/null) || SEL_TYPE=""
+  SEL_TC=$(echo "$SEL_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('target_content',''))" 2>/dev/null) || SEL_TC=""
+  if [ "$SEL_TYPE" = "selection" ] && [ "$SEL_TC" = "Edited content" ]; then
+    ok "selection comment fields: target_type=$SEL_TYPE, target_content=$SEL_TC"
+  else
+    fail "selection comment fields: target_type=$SEL_TYPE, target_content=$SEL_TC"
+  fi
+  rcurl_status "$BASE/api/spaces/$SPACE_ID/comments/$SEL_ID -X DELETE $AUTH" >/dev/null 2>&1
+else
+  fail "selection comment add: $SEL_RESP"
+fi
+
+# ── 18. rm ──
+echo ""
+echo "── 18. rm ──"
 RM_STATUS=$(rcurl_status "$BASE/api/spaces/$SPACE_ID/files/delete -X POST $AUTH -H 'Content-Type: application/json' -d '{\"path\":\"$TEST_FILE\"}'")
 if [ "$RM_STATUS" = "200" ] || [ "$RM_STATUS" = "204" ]; then
   ok "rm: deleted test file"
@@ -245,9 +264,9 @@ else
   fail "rm: status=$RM_STATUS"
 fi
 
-# ── 18. trash ──
+# ── 19. trash ──
 echo ""
-echo "── 18. trash ──"
+echo "── 19. trash ──"
 TRASH=$(rcurl "$BASE/api/spaces/$SPACE_ID/trash $AUTH")
 TRASH_COMMIT=$(echo "$TRASH" | python3 -c "
 import sys, json
@@ -264,10 +283,10 @@ else
   TRASH_COMMIT=""
 fi
 
-# ── 19. restore ──
+# ── 20. restore ──
 if [ -n "$TRASH_COMMIT" ]; then
   echo ""
-  echo "── 19. restore ──"
+  echo "── 20. restore ──"
   RESTORE_STATUS=$(rcurl_status "$BASE/api/spaces/$SPACE_ID/trash/restore -X POST $AUTH -H 'Content-Type: application/json' -d '{\"path\":\"$TEST_FILE\",\"commit\":\"$TRASH_COMMIT\"}'")
   if [ "$RESTORE_STATUS" = "200" ] || [ "$RESTORE_STATUS" = "204" ]; then
     ok "restore"
@@ -275,9 +294,9 @@ if [ -n "$TRASH_COMMIT" ]; then
     fail "restore: status=$RESTORE_STATUS"
   fi
 
-  # ── 20. rollback ──
+  # ── 21. rollback ──
   echo ""
-  echo "── 20. rollback ──"
+  echo "── 21. rollback ──"
   FIRST_COMMIT=$(echo "$LOG_RESP" | python3 -c "import sys,json; cs=json.load(sys.stdin); print(cs[-1]['hash'] if cs else '')" 2>/dev/null) || FIRST_COMMIT=""
   if [ -n "$FIRST_COMMIT" ]; then
     ROLLBACK_STATUS=$(rcurl_status "$BASE/api/spaces/$SPACE_ID/files/rollback -X POST $AUTH -H 'Content-Type: application/json' -d '{\"file_path\":\"$TEST_FILE\",\"commit_hash\":\"$FIRST_COMMIT\"}'")

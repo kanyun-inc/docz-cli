@@ -521,6 +521,9 @@ export function registerCommands(program: Command): void {
       for (const c of comments) {
         const status = c.is_closed ? ' [closed]' : '';
         console.log(`#${c.id} ${c.user_name} (${c.created_at})${status}`);
+        if (c.target_content) {
+          console.log(`  > ${c.target_content}`);
+        }
         console.log(`  ${c.content}`);
         for (const r of c.replies) {
           console.log(`    → ${r.user_name}: ${r.content}`);
@@ -535,17 +538,25 @@ export function registerCommands(program: Command): void {
     )
     .argument('<target>', 'space:path or short URL')
     .argument('<content>', 'Comment text (or - for stdin)')
-    .action(async (target: string, content: string) => {
-      const client = getClient();
-      const { spaceId, path } = await resolveTarget(client, [target]);
-      if (!path) {
-        console.error('Error: file path is required.');
-        process.exit(1);
+    .option(
+      '--quote <text>',
+      'Quote text from the file (selection comment). The quoted text will be highlighted in Web UI'
+    )
+    .action(
+      async (target: string, content: string, opts: { quote?: string }) => {
+        const client = getClient();
+        const { spaceId, path } = await resolveTarget(client, [target]);
+        if (!path) {
+          console.error('Error: file path is required.');
+          process.exit(1);
+        }
+        const body = content === '-' ? await readStdin() : content;
+        const c = await client.createComment(spaceId, path, body, {
+          quote: opts.quote,
+        });
+        console.log(`Comment #${c.id} created.`);
       }
-      const body = content === '-' ? await readStdin() : content;
-      const c = await client.createComment(spaceId, path, body);
-      console.log(`Comment #${c.id} created.`);
-    });
+    );
 
   comment
     .command('reply')
