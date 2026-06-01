@@ -1,5 +1,11 @@
 # docz-cli
 
+## 0.8.1
+
+### Patch Changes
+
+- 29d4921: feat: CLI 和 MCP 支持划线评论（--quote）
+
 ## 0.8.0
 
 ### Minor Changes
