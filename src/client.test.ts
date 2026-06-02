@@ -151,6 +151,14 @@ const server = setupServer(
         },
       });
     }
+    if (params.fp === 'config.json') {
+      return new HttpResponse('{"enabled":true}', {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Git-Ref': HEAD_REF,
+        },
+      });
+    }
     return HttpResponse.text('not found', { status: 404 });
   }),
 
@@ -305,6 +313,11 @@ const server = setupServer(
     if (params.token === 'xYz123AbC') {
       return HttpResponse.text('# Hello\nShared content.');
     }
+    if (params.token === 'jsonShare') {
+      return new HttpResponse('{"shared":true}', {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     return HttpResponse.text('not found', { status: 404 });
   }),
 
@@ -415,6 +428,11 @@ describe('DocSyncClient', () => {
   it('cat() returns content', async () => {
     const txt = await c.cat(SID, 'README.md');
     expect(txt).toContain('# Hello');
+  });
+
+  it('cat() returns JSON file content as raw text', async () => {
+    const txt = await c.cat(SID, 'config.json');
+    expect(txt).toBe('{"enabled":true}');
   });
 
   it('cat() throws on 404', async () => {
@@ -581,6 +599,11 @@ describe('DocSyncClient', () => {
   it('getSharedFile() returns content', async () => {
     const content = await c.getSharedFile('xYz123AbC');
     expect(content).toContain('Shared content');
+  });
+
+  it('getSharedFile() returns JSON file content as raw text', async () => {
+    const content = await c.getSharedFile('jsonShare');
+    expect(content).toBe('{"shared":true}');
   });
 
   it('getSharedFileInfo() returns info', async () => {

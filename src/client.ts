@@ -186,6 +186,23 @@ export class DocSyncClient {
     return res.text() as unknown as T;
   }
 
+  private async requestText(path: string, init?: RequestInit): Promise<string> {
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        ...init?.headers,
+      },
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`${res.status} ${res.statusText}: ${body}`.trim());
+    }
+
+    return res.text();
+  }
+
   // --- Auth ---
   async me(): Promise<User> {
     return this.request('/api/auth/me');
@@ -245,7 +262,7 @@ export class DocSyncClient {
 
   // --- Blob ---
   async cat(spaceId: string, filepath: string): Promise<string> {
-    return this.request(
+    return this.requestText(
       `/api/spaces/${spaceId}/blob/${encodeURIComponent(filepath)}`
     );
   }
@@ -486,7 +503,7 @@ export class DocSyncClient {
   }
 
   async getSharedFile(token: string): Promise<string> {
-    return this.request(`/api/share/${token}`);
+    return this.requestText(`/api/share/${token}`);
   }
 
   async getSharedFileInfo(token: string): Promise<ShareFileInfo> {
