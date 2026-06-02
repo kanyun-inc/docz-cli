@@ -1,5 +1,11 @@
 # docz-cli
 
+## 0.8.2
+
+### Patch Changes
+
+- 7e14db2: Fix `cat` and `share cat` so JSON files are output as raw text instead of being parsed by content type.
+
 ## 0.8.1
 
 ### Patch Changes
