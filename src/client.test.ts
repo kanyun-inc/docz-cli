@@ -148,6 +148,7 @@ const server = setupServer(
         headers: {
           'Content-Type': 'text/plain',
           'X-Git-Ref': HEAD_REF,
+          'X-File-Ref': 'blob:file-readme',
         },
       });
     }
@@ -156,6 +157,7 @@ const server = setupServer(
         headers: {
           'Content-Type': 'application/json',
           'X-Git-Ref': HEAD_REF,
+          'X-File-Ref': 'blob:file-config',
         },
       });
     }
@@ -176,12 +178,13 @@ const server = setupServer(
         {
           error: 'conflict',
           current_ref: HEAD_REF,
+          current_file_ref: 'blob:current',
           path: body.path,
         },
         { status: 409 }
       );
     }
-    return HttpResponse.json({ path: body.path, ref: NEW_REF });
+    return HttpResponse.json({ path: body.path, ref: NEW_REF, file_ref: 'blob:new' });
   }),
 
   http.post(`${BASE}/api/spaces/:sid/files/mkdir`, () => HttpResponse.json({})),
@@ -439,10 +442,11 @@ describe('DocSyncClient', () => {
     await expect(c.cat(SID, 'nope.md')).rejects.toThrow('404');
   });
 
-  it('catWithRef() returns content and X-Git-Ref', async () => {
+  it('catWithRef() returns content, X-Git-Ref, and X-File-Ref', async () => {
     const result = await c.catWithRef(SID, 'README.md');
     expect(result.content).toContain('# Hello');
     expect(result.ref).toBe(HEAD_REF);
+    expect(result.file_ref).toBe('blob:file-readme');
   });
 
   it('catWithRef() throws on 404', async () => {
@@ -460,6 +464,7 @@ describe('DocSyncClient', () => {
     });
     expect(r.path).toBe('test.md');
     expect(r.ref).toBe(NEW_REF);
+    expect(r.file_ref).toBe('blob:new');
   });
 
   it('save() with custom message', async () => {
@@ -480,6 +485,7 @@ describe('DocSyncClient', () => {
       const conflict = err as ConflictError;
       expect(conflict.detail.error).toBe('conflict');
       expect(conflict.detail.current_ref).toBe(HEAD_REF);
+      expect(conflict.detail.current_file_ref).toBe('blob:current');
       expect(conflict.message).toContain('modified by others');
     }
   });
