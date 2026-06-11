@@ -17,6 +17,23 @@
     "syncedAt": "2026-06-11T15:55:00+08:00",
     "doczLinks": []
   },
+  "git": {
+    "repoUrl": "https://gitlab-ee.zhenguanyu.com/conan-ai-studio/docz-cli",
+    "branch": "feature/task-1030-docz-cli-image-upload",
+    "branchUrl": "https://gitlab-ee.zhenguanyu.com/conan-ai-studio/docz-cli/-/tree/feature/task-1030-docz-cli-image-upload",
+    "pushed": true
+  },
+  "docz": {
+    "basePath": "S160-技术:projects/[P-6] 平台支持/Epics/[E-4900288] [Auto] docz-cli 支持图片上传：image upload 命令 + MCP 工具 docz_upload_image/[S-734] [Auto] docz-cli 支持图片上传：image upload 命令 + MCP 工具 docz_upload_image/[T-1030] docz-cli 支持图片上传：image upload 命令 + MCP 工具 docz_upload_image",
+    "baseUrl": "https://docz.zhenguanyu.com/s/rd/projects/[P-6] 平台支持/Epics/[E-4900288] [Auto] docz-cli 支持图片上传：image upload 命令 + MCP 工具 docz_upload_image/[S-734] [Auto] docz-cli 支持图片上传：image upload 命令 + MCP 工具 docz_upload_image/[T-1030] docz-cli 支持图片上传：image upload 命令 + MCP 工具 docz_upload_image",
+    "lastSyncedAt": "2026-06-11T16:48:00+08:00",
+    "entries": [
+      { "kind": "file", "title": "proposal.md", "url": "https://docz.zhenguanyu.com/s/rd/projects/[P-6] 平台支持/Epics/[E-4900288] [Auto] docz-cli 支持图片上传：image upload 命令 + MCP 工具 docz_upload_image/[S-734] [Auto] docz-cli 支持图片上传：image upload 命令 + MCP 工具 docz_upload_image/[T-1030] docz-cli 支持图片上传：image upload 命令 + MCP 工具 docz_upload_image/proposal.md", "knownId": "proposal", "type": "proposal" },
+      { "kind": "folder", "title": "specs", "url": "https://docz.zhenguanyu.com/s/rd/projects/[P-6] 平台支持/Epics/[E-4900288] [Auto] docz-cli 支持图片上传：image upload 命令 + MCP 工具 docz_upload_image/[S-734] [Auto] docz-cli 支持图片上传：image upload 命令 + MCP 工具 docz_upload_image/[T-1030] docz-cli 支持图片上传：image upload 命令 + MCP 工具 docz_upload_image/specs/", "knownId": "specs", "type": "spec" },
+      { "kind": "file", "title": "design.md", "url": "https://docz.zhenguanyu.com/s/rd/projects/[P-6] 平台支持/Epics/[E-4900288] [Auto] docz-cli 支持图片上传：image upload 命令 + MCP 工具 docz_upload_image/[S-734] [Auto] docz-cli 支持图片上传：image upload 命令 + MCP 工具 docz_upload_image/[T-1030] docz-cli 支持图片上传：image upload 命令 + MCP 工具 docz_upload_image/design.md", "knownId": "design", "type": "design" },
+      { "kind": "file", "title": "tasks.md", "url": "https://docz.zhenguanyu.com/s/rd/projects/[P-6] 平台支持/Epics/[E-4900288] [Auto] docz-cli 支持图片上传：image upload 命令 + MCP 工具 docz_upload_image/[S-734] [Auto] docz-cli 支持图片上传：image upload 命令 + MCP 工具 docz_upload_image/[T-1030] docz-cli 支持图片上传：image upload 命令 + MCP 工具 docz_upload_image/tasks.md", "knownId": "tasks", "type": "tasks" }
+    ]
+  },
   "lifecycle": {
     "lastState": "dev_done",
     "lastTransitionAt": "2026-06-11T16:28:00+08:00"
