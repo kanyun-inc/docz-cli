@@ -1,5 +1,15 @@
 # docz-cli
 
+## 0.9.0
+
+### Minor Changes
+
+- 1422759: Add image upload: new `image upload <file>` CLI command and `docz_upload_image` MCP tool. Uploads png/jpg/webp (max 5MB) to the server's OSS asset storage and returns a permanent public URL with a ready-to-paste Markdown reference — images don't consume Space quota and are visible in share links and blogs without login.
+
+### Patch Changes
+
+- 4c55641: feat(image): add image upload command and docz_upload_image MCP tool
+
 ## 0.8.2
 
 ### Patch Changes
