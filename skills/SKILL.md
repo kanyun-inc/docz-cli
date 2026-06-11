@@ -81,6 +81,7 @@ npx docz-cli@latest ls -R <space>                         # list all files recur
 npx docz-cli@latest cat <space>:<path>                    # read file to stdout
 npx docz-cli@latest cat --ref <space>:<path>              # read file + print ref to stderr
 npx docz-cli@latest upload <local-file> <space>[:<dir>]   # upload file
+npx docz-cli@latest image upload <local-image>            # upload image to OSS, get public URL
 npx docz-cli@latest mkdir <space>:<path>                  # create folder
 npx docz-cli@latest mv <space>:<from> <to>                # rename/move
 npx docz-cli@latest rm <space>:<path>                     # delete (30-day trash)
@@ -196,6 +197,7 @@ done | npx docz-cli@latest write G160-研发:full-report.md -
 - `write` detects concurrent edits automatically. If conflict occurs, re-read and retry.
 - `rm` moves to trash (recoverable for 30 days), not permanent delete. Use `trash` + `restore` to recover.
 - Text files (.md, .csv, .html) work with `cat`. Binary files (images, PDF) use `upload` only.
+- To embed images in a Markdown document, first run `image upload <file>` to get a permanent public URL, then write `![alt](url)` into the document. Images go to OSS (not the Space): no Space quota, and visible in share links / blogs without login. Supports png/jpg/webp, max 5MB.
 - After writing a file, use `shortlink` to get a clickable URL for the user.
 - Backend is Git: every write creates a commit. Use `log` to see history, `diff` to see changes.
 - Any DocSync URL can be pasted directly into any command. Supports short URLs (`/s/slug/f/fileId`), path URLs (`/s/slug/path/to/file`), and legacy URLs (`/spaces/id/path`).
