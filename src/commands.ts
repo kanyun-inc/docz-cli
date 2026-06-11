@@ -2,7 +2,7 @@
  * CLI Commands
  */
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename } from 'node:path';
 import type { Command } from 'commander';
 import { ConflictError, DocSyncClient } from './client.js';
@@ -180,6 +180,44 @@ async function readStdin(): Promise<string> {
 
 const MAX_SAVE_SIZE = 2 * 1024 * 1024; // 2MB
 
+// --- Image upload (shared by CLI command and MCP tool) ---
+
+export const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'webp'];
+export const IMAGE_MAX_SIZE = 5 * 1024 * 1024; // 5MB, same as server limit
+
+/**
+ * Validate and read a local image file for upload.
+ * Returns { content, filename } on success, or { error } describing
+ * why the file was rejected (no request is sent in that case).
+ */
+export function readImageFile(
+  filePath: string
+): { content: Buffer; filename: string } | { error: string } {
+  if (!existsSync(filePath)) {
+    return { error: `File not found: ${filePath}` };
+  }
+  const filename = basename(filePath);
+  const ext = filename.split('.').pop()?.toLowerCase() ?? '';
+  if (!IMAGE_EXTS.includes(ext)) {
+    return {
+      error: `Unsupported image type ".${ext}". Supported: ${IMAGE_EXTS.join(', ')}`,
+    };
+  }
+  const size = statSync(filePath).size;
+  if (size > IMAGE_MAX_SIZE) {
+    return {
+      error: `Image too large (${formatSize(size)}). Max size: 5 MB`,
+    };
+  }
+  return { content: readFileSync(filePath), filename };
+}
+
+/** Markdown image reference with the filename (minus extension) as alt text */
+export function markdownImageRef(filename: string, url: string): string {
+  const alt = filename.replace(/\.[^.]+$/, '');
+  return `![${alt}](${url})`;
+}
+
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
@@ -308,6 +346,27 @@ export function registerCommands(program: Command): void {
       const targetDir = dir || '';
       const result = await client.upload(spaceId, targetDir, filename, content);
       console.log(`Uploaded: ${result.path}`);
+    });
+
+  // --- image ---
+  const image = program.command('image').description('Image asset operations');
+
+  image
+    .command('upload')
+    .description(
+      'Upload image to OSS, returns a permanent public URL for Markdown embedding'
+    )
+    .argument('<file>', 'Local image file (png/jpg/webp, max 5MB)')
+    .action(async (file: string) => {
+      const read = readImageFile(file);
+      if ('error' in read) {
+        console.error(`Error: ${read.error}`);
+        process.exit(1);
+      }
+      const client = getClient();
+      const result = await client.uploadImage(read.content, read.filename);
+      console.log(`URL: ${result.url}`);
+      console.log(`Markdown: ${markdownImageRef(read.filename, result.url)}`);
     });
 
   // --- write ---

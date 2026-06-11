@@ -1,10 +1,16 @@
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { HttpResponse, http } from 'msw';
 import { setupServer } from 'msw/node';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { DocSyncClient } from './client.js';
 import {
+  IMAGE_MAX_SIZE,
+  markdownImageRef,
   parseExpires,
   parseTarget,
+  readImageFile,
   resolveSpaceArg,
   resolveTarget,
 } from './commands.js';
@@ -360,5 +366,71 @@ describe('resolveSpaceArg', () => {
     await expect(
       resolveSpaceArg(client, 'https://example.com/no-slug')
     ).rejects.toThrow('Unrecognized DocSync URL');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// readImageFile — local validation for image upload (CLI + MCP shared)
+// ---------------------------------------------------------------------------
+
+describe('readImageFile', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'docz-img-'));
+
+  it('reads a valid png file', () => {
+    const file = join(dir, 'shot.png');
+    writeFileSync(file, Buffer.from('fake-png'));
+    const result = readImageFile(file);
+    expect('error' in result).toBe(false);
+    if (!('error' in result)) {
+      expect(result.filename).toBe('shot.png');
+      expect(result.content.toString()).toBe('fake-png');
+    }
+  });
+
+  it('rejects nonexistent file without reading', () => {
+    const result = readImageFile(join(dir, 'nope.png'));
+    expect(result).toEqual({
+      error: `File not found: ${join(dir, 'nope.png')}`,
+    });
+  });
+
+  it('rejects unsupported extension (gif)', () => {
+    const file = join(dir, 'anim.gif');
+    writeFileSync(file, Buffer.from('GIF89a'));
+    const result = readImageFile(file);
+    expect('error' in result && result.error).toContain(
+      'Unsupported image type'
+    );
+    expect('error' in result && result.error).toContain('png, jpg, jpeg, webp');
+  });
+
+  it('rejects file exceeding 5MB', () => {
+    const file = join(dir, 'big.png');
+    writeFileSync(file, Buffer.alloc(IMAGE_MAX_SIZE + 1));
+    const result = readImageFile(file);
+    expect('error' in result && result.error).toContain('Image too large');
+  });
+
+  it('accepts uppercase extension', () => {
+    const file = join(dir, 'SHOT.PNG');
+    writeFileSync(file, Buffer.from('fake-png'));
+    const result = readImageFile(file);
+    expect('error' in result).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// markdownImageRef
+// ---------------------------------------------------------------------------
+
+describe('markdownImageRef', () => {
+  it('uses filename minus extension as alt text', () => {
+    expect(markdownImageRef('shot.png', 'https://oss/x.png')).toBe(
+      '![shot](https://oss/x.png)'
+    );
+  });
+
+  it('handles dots in filename', () => {
+    expect(markdownImageRef('a.b.png', 'u')).toBe('![a.b](u)');
   });
 });

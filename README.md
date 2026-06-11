@@ -79,6 +79,7 @@ export DOCSYNC_API_TOKEN=<your-token>
 | `ls <space>[:<path>]` | List files and folders |
 | `cat <space>:<path>` | Read file content |
 | `upload <file> <space>[:<dir>]` | Upload local file |
+| `image upload <file>` | Upload image to OSS, get permanent public URL for Markdown |
 | `write <space>:<path> <content>` | Write content to file (`-` for stdin) |
 | `mkdir <space>:<path>` | Create folder |
 | `rm <space>:<path>` | Delete file/folder (30-day trash) |
@@ -139,6 +140,16 @@ docz-cli write --force 吴鹏飞:notes/todo.md '# Updated'              # Skip c
 echo '# Report' | docz-cli write 吴鹏飞:reports/daily.md -            # From stdin
 docz-cli upload ./report.pdf G160-研发:reports                         # Upload file
 docz-cli mkdir G160-研发:new-project                                   # Create folder
+```
+
+### Images
+
+Upload images to OSS for embedding in Markdown documents. Returns a permanent public URL — visible in share links and blogs without login, and doesn't consume Space quota. Supports png/jpg/webp, max 5MB.
+
+```bash
+docz-cli image upload ./screenshot.png
+# URL: https://<bucket>.oss-cn-beijing.aliyuncs.com/docz-markdown/2026/06/.../image.png
+# Markdown: ![screenshot](https://...)
 ```
 
 ### Manage
@@ -254,6 +265,7 @@ Add to your MCP settings:
 | `docz_list_files` | List files in a directory |
 | `docz_read_file` | Read file content |
 | `docz_upload_file` | Upload/create a file |
+| `docz_upload_image` | Upload image to OSS, returns public URL for Markdown |
 | `docz_mkdir` | Create a folder |
 | `docz_delete` | Delete file/folder |
 | `docz_file_history` | View change history |
@@ -285,6 +297,7 @@ docz-cli wraps the DocSync REST API:
 | `ls` | `GET /api/spaces/{id}/tree?path=` |
 | `cat` | `GET /api/spaces/{id}/blob/{path}` |
 | `upload` / `write` | `POST /api/spaces/{id}/files/upload` or `POST /api/spaces/{id}/files/save` |
+| `image upload` | `POST /api/assets/images` |
 | `mkdir` | `POST /api/spaces/{id}/files/mkdir` |
 | `rm` | `POST /api/spaces/{id}/files/delete` |
 | `mv` | `POST /api/spaces/{id}/files/rename` |
