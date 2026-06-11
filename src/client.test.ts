@@ -169,6 +169,23 @@ const server = setupServer(
     return HttpResponse.json({ path: `${path}/${file.name}` });
   }),
 
+  http.post(`${BASE}/api/assets/images`, async ({ request }) => {
+    if (!request.headers.get('Authorization')?.includes(TOKEN)) {
+      return HttpResponse.text('unauthorized', { status: 401 });
+    }
+    const form = await request.formData();
+    const file = form.get('file') as File;
+    if (!file) {
+      return HttpResponse.text('file field is required', { status: 400 });
+    }
+    return HttpResponse.json({
+      url: `https://oss.example.com/docz-markdown/2026/06/u/${file.name}`,
+      object_key: `docz-markdown/2026/06/u/${file.name}`,
+      content_type: 'image/png',
+      size: file.size,
+    });
+  }),
+
   http.post(`${BASE}/api/spaces/:sid/files/save`, async ({ request }) => {
     const body = (await request.json()) as Record<string, string>;
     if (body.base_ref === 'stale-ref') {
@@ -654,5 +671,44 @@ describe('DocSyncClient', () => {
 
   it('resolveFileRef() throws on unknown', async () => {
     await expect(c.resolveFileRef('bad')).rejects.toThrow('404');
+  });
+
+  // --- Image upload ---
+  it('uploadImage() returns public URL and metadata', async () => {
+    const result = await c.uploadImage(Buffer.from('fake-png-bytes'), 'a.png');
+    expect(result.url).toBe(
+      'https://oss.example.com/docz-markdown/2026/06/u/a.png'
+    );
+    expect(result.object_key).toBe('docz-markdown/2026/06/u/a.png');
+    expect(result.size).toBe(14);
+  });
+
+  it('uploadImage() throws on 413 too large', async () => {
+    server.use(
+      http.post(`${BASE}/api/assets/images`, () =>
+        HttpResponse.text('image too large', { status: 413 })
+      )
+    );
+    await expect(c.uploadImage(Buffer.from('x'), 'big.png')).rejects.toThrow(
+      '413'
+    );
+  });
+
+  it('uploadImage() throws on 400 unsupported type', async () => {
+    server.use(
+      http.post(`${BASE}/api/assets/images`, () =>
+        HttpResponse.text('unsupported image type', { status: 400 })
+      )
+    );
+    await expect(c.uploadImage(Buffer.from('GIF89a'), 'a.png')).rejects.toThrow(
+      'unsupported image type'
+    );
+  });
+
+  it('uploadImage() throws on 401 unauthorized', async () => {
+    const bad = new DocSyncClient(BASE, 'wrong-token');
+    await expect(bad.uploadImage(Buffer.from('x'), 'a.png')).rejects.toThrow(
+      '401'
+    );
   });
 });
