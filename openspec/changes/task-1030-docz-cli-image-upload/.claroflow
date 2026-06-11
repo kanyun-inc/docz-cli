@@ -1,0 +1,24 @@
+{
+  "taskId": "1030",
+  "title": "docz-cli 支持图片上传：image upload 命令 + MCP 工具 docz_upload_image",
+  "storyId": "734",
+  "env": "online",
+  "assignee": {
+    "ldapUid": "yanhongkang",
+    "name": "闫洪康"
+  },
+  "repositories": [
+    {
+      "repoName": "docz-cli",
+      "branch": "feature/task-1030-docz-cli-image-upload"
+    }
+  ],
+  "prd": {
+    "syncedAt": "2026-06-11T15:55:00+08:00",
+    "doczLinks": []
+  },
+  "lifecycle": {
+    "lastState": "coding",
+    "lastTransitionAt": "2026-06-11T16:14:30+08:00"
+  }
+}

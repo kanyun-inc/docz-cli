@@ -16,7 +16,7 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { ConflictError, DocSyncClient } from './client.js';
-import { parseExpires } from './commands.js';
+import { markdownImageRef, parseExpires, readImageFile } from './commands.js';
 import { getBaseUrl, getToken } from './config.js';
 
 function getClient(): DocSyncClient {
@@ -135,6 +135,21 @@ export async function startMcpServer(): Promise<void> {
             },
           },
           required: ['space', 'path', 'content'],
+        },
+      },
+      {
+        name: 'docz_upload_image',
+        description:
+          '为 Docz 文档配图：上传本地图片到图床（OSS），返回永久公网 URL。典型工作流：先用本工具上传图片拿到 URL，再把返回的 ![alt](url) 写入文档内容，通过 docz_save_file / docz_upload_file 保存。图片存 OSS 而非 Space（不占配额），URL 无需登录即可访问，分享链接/博客中均可显示。注意：文档配图请用本工具，不要用 docz_upload_file 把图片传进 Space。支持 png/jpg/webp，最大 5MB',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            file_path: {
+              type: 'string',
+              description: '本地图片文件的绝对路径',
+            },
+          },
+          required: ['file_path'],
         },
       },
       {
@@ -541,6 +556,17 @@ export async function startMcpServer(): Promise<void> {
             }
             throw err;
           }
+        }
+
+        case 'docz_upload_image': {
+          const read = readImageFile(String(args.file_path));
+          if ('error' in read) {
+            return fail(read.error);
+          }
+          const result = await client.uploadImage(read.content, read.filename);
+          return ok(
+            `已上传: ${result.url}\nMarkdown 引用: ${markdownImageRef(read.filename, result.url)}`
+          );
         }
 
         case 'docz_upload_file': {
