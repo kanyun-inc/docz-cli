@@ -102,6 +102,13 @@ export interface CatResult {
   ref: string;
 }
 
+export interface UploadImageResult {
+  url: string;
+  object_key: string;
+  content_type: string;
+  size: number;
+}
+
 export interface SaveResult {
   path: string;
   ref: string;
@@ -296,6 +303,24 @@ export class DocSyncClient {
     form.append('file', blob, filename);
     form.append('path', dir);
     return this.request(`/api/spaces/${spaceId}/files/upload`, {
+      method: 'POST',
+      body: form,
+    });
+  }
+
+  /**
+   * Upload an image to the server's OSS asset storage.
+   * Returns a permanent public URL that can be embedded in Markdown.
+   * Server limits: png/jpg/webp only, max 5MB.
+   */
+  async uploadImage(
+    content: Buffer,
+    filename: string
+  ): Promise<UploadImageResult> {
+    const blob = new Blob([content], { type: 'application/octet-stream' });
+    const form = new FormData();
+    form.append('file', blob, filename);
+    return this.request('/api/assets/images', {
       method: 'POST',
       body: form,
     });
