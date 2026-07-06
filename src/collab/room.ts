@@ -34,6 +34,10 @@ type PendingPublish = {
   timer: ReturnType<typeof setTimeout>;
 };
 
+type OpenedCollabOptions = CollabOpenOptions & {
+  timeoutMs: number;
+};
+
 function wsUrl(baseUrl: string): string {
   const u = new URL(baseUrl);
   u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -64,39 +68,37 @@ export class CollabRoomClient {
   readonly doc = new Y.Doc();
   private provider: HocuspocusProvider | null = null;
   private websocketProvider: HocuspocusProviderWebsocket | null = null;
-  private openOptions: CollabOpenOptions | null = null;
+  private openOptions: OpenedCollabOptions | null = null;
   private pending = new Map<string, PendingPublish>();
   private connected = false;
   private synced = false;
   private readOnly = false;
 
   async open(options: CollabOpenOptions): Promise<CollabReadResult> {
-    this.openOptions = {
+    const openOptions = {
       ...options,
       path: normalizeCollabFilePath(options.path),
       timeoutMs: options.timeoutMs ?? 30000,
     };
+    this.openOptions = openOptions;
 
     const opened = new Promise<void>((resolve, reject) => {
       const websocketProvider = new HocuspocusProviderWebsocket({
-        url: wsUrl(this.openOptions!.baseUrl),
+        url: wsUrl(openOptions.baseUrl),
         WebSocketPolyfill: WebSocket,
         parameters: {
-          space_id: this.openOptions!.spaceId,
-          file_path: this.openOptions!.path,
-          client: this.openOptions!.client,
-          client_version: this.openOptions!.clientVersion,
+          space_id: openOptions.spaceId,
+          file_path: openOptions.path,
+          client: openOptions.client,
+          client_version: openOptions.clientVersion,
         },
       });
       this.websocketProvider = websocketProvider;
       const provider = new HocuspocusProvider({
         websocketProvider,
-        name: buildCollabDocumentName(
-          this.openOptions!.spaceId,
-          this.openOptions!.path
-        ),
+        name: buildCollabDocumentName(openOptions.spaceId, openOptions.path),
         document: this.doc,
-        token: () => this.openOptions!.token,
+        token: () => openOptions.token,
         onAuthenticated: () => {},
         onAuthenticationFailed: (data) => {
           reject(
@@ -123,7 +125,7 @@ export class CollabRoomClient {
       this.provider = provider;
     });
 
-    await withTimeout(opened, this.openOptions.timeoutMs!, 'collab open');
+    await withTimeout(opened, openOptions.timeoutMs, 'collab open');
     return this.read();
   }
 
@@ -219,9 +221,15 @@ export class CollabRoomClient {
       msg.type === 'publish_ack' ||
       msg.type === 'recreate_after_delete_ack'
     ) {
+      if (!this.openOptions) {
+        pending.reject(
+          new CollabUnknownError('collab room closed before publish ack')
+        );
+        return;
+      }
       pending.resolve({
-        spaceId: this.openOptions!.spaceId,
-        path: this.openOptions!.path,
+        spaceId: this.openOptions.spaceId,
+        path: this.openOptions.path,
         ref: msg.ref || '',
         contentRef: msg.content_ref || '',
         externalBackup: msg.external_backup || '',
