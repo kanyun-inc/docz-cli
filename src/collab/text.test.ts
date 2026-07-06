@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
-import { buildCollabDocumentName, normalizeCollabFilePath } from './roomName.js';
+import {
+  buildCollabDocumentName,
+  normalizeCollabFilePath,
+} from './roomName.js';
 import {
   CollabBaseHashRequiredError,
   CollabConflictError,

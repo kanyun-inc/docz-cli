@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import * as Y from 'yjs';
+import type * as Y from 'yjs';
 
 export function collabHash(content: string): string {
   return `sha256:${createHash('sha256').update(content, 'utf8').digest('hex')}`;

@@ -17,7 +17,10 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { ConflictError, DocSyncClient } from './client.js';
 import { withCollabRoom } from './collab/room.js';
-import { CollabBaseHashRequiredError, CollabConflictError } from './collab/text.js';
+import {
+  CollabBaseHashRequiredError,
+  CollabConflictError,
+} from './collab/text.js';
 import { CollabUnknownError } from './collab/types.js';
 import { markdownImageRef, parseExpires, readImageFile } from './commands.js';
 import { getBaseUrl, getToken } from './config.js';
@@ -650,7 +653,9 @@ export async function startMcpServer(): Promise<void> {
 
         case 'docz_collab_read_file': {
           const sid = await resolveSpaceId(client, String(args.space));
-          const timeoutMs = args.timeout_ms ? Number(args.timeout_ms) : undefined;
+          const timeoutMs = args.timeout_ms
+            ? Number(args.timeout_ms)
+            : undefined;
           return withCollabRoom(
             {
               baseUrl: getBaseUrl(),
@@ -676,7 +681,9 @@ export async function startMcpServer(): Promise<void> {
           if (Buffer.byteLength(saveContent, 'utf-8') > 2 * 1024 * 1024) {
             return fail('内容超过 2MB 限制，请使用 docz_upload_file 上传');
           }
-          const timeoutMs = args.timeout_ms ? Number(args.timeout_ms) : undefined;
+          const timeoutMs = args.timeout_ms
+            ? Number(args.timeout_ms)
+            : undefined;
           try {
             return await withCollabRoom(
               {
@@ -731,7 +738,9 @@ export async function startMcpServer(): Promise<void> {
 
         case 'docz_collab_publish': {
           const sid = await resolveSpaceId(client, String(args.space));
-          const timeoutMs = args.timeout_ms ? Number(args.timeout_ms) : undefined;
+          const timeoutMs = args.timeout_ms
+            ? Number(args.timeout_ms)
+            : undefined;
           try {
             return await withCollabRoom(
               {
@@ -748,7 +757,9 @@ export async function startMcpServer(): Promise<void> {
                 const backup = result.externalBackup
                   ? `\nexternal_backup: ${result.externalBackup}`
                   : '';
-                return ok(`已发布: ${result.path}\nref: ${result.ref}${backup}`);
+                return ok(
+                  `已发布: ${result.path}\nref: ${result.ref}${backup}`
+                );
               }
             );
           } catch (err) {

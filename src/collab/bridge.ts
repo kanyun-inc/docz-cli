@@ -1,5 +1,5 @@
 import readline from 'node:readline';
-import { CollabRoomClient } from './room.js';
+import type { CollabRoomClient } from './room.js';
 import { collabHash } from './text.js';
 
 type BridgeRequest = {
@@ -12,10 +12,15 @@ function send(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value)}\n`);
 }
 
-export async function startCollabBridge(openRoom: (target: string) => Promise<CollabRoomClient>): Promise<void> {
+export async function startCollabBridge(
+  openRoom: (target: string) => Promise<CollabRoomClient>
+): Promise<void> {
   let room: CollabRoomClient | null = null;
   let cleanupObserver: (() => void) | null = null;
-  const rl = readline.createInterface({ input: process.stdin, crlfDelay: Number.POSITIVE_INFINITY });
+  const rl = readline.createInterface({
+    input: process.stdin,
+    crlfDelay: Number.POSITIVE_INFINITY,
+  });
 
   function attachObserver(nextRoom: CollabRoomClient): void {
     cleanupObserver?.();
@@ -52,13 +57,29 @@ export async function startCollabBridge(openRoom: (target: string) => Promise<Co
         room = await openRoom(target);
         attachObserver(room);
         const current = room.read();
-        send({ id: req.id, result: { content: current.content, hash: current.collabHash, read_only: current.readOnly } });
-        send({ event: 'opened', content: current.content, hash: current.collabHash });
+        send({
+          id: req.id,
+          result: {
+            content: current.content,
+            hash: current.collabHash,
+            read_only: current.readOnly,
+          },
+        });
+        send({
+          event: 'opened',
+          content: current.content,
+          hash: current.collabHash,
+        });
       } else if (req.method === 'local_change') {
         if (!room) throw new Error('room is not open');
         const content = String(req.params?.content ?? '');
-        const baseHash = req.params?.base_hash ? String(req.params.base_hash) : undefined;
-        const result = room.write(content, { baseHash, force: req.params?.force === true });
+        const baseHash = req.params?.base_hash
+          ? String(req.params.base_hash)
+          : undefined;
+        const result = room.write(content, {
+          baseHash,
+          force: req.params?.force === true,
+        });
         send({ id: req.id, result: { hash: result.collabHash } });
       } else if (req.method === 'publish') {
         if (!room) throw new Error('room is not open');
@@ -72,7 +93,10 @@ export async function startCollabBridge(openRoom: (target: string) => Promise<Co
         throw new Error(`unknown method: ${req.method}`);
       }
     } catch (err) {
-      send({ id: req.id, error: err instanceof Error ? err.message : String(err) });
+      send({
+        id: req.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 

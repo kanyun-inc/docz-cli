@@ -8,8 +8,11 @@ import type { Command } from 'commander';
 import { ConflictError, DocSyncClient } from './client.js';
 import { startCollabBridge } from './collab/bridge.js';
 import { CollabRoomClient, withCollabRoom } from './collab/room.js';
-import { CollabBaseHashRequiredError, CollabConflictError } from './collab/text.js';
-import { CollabUnknownError, type CollabOpenOptions } from './collab/types.js';
+import {
+  CollabBaseHashRequiredError,
+  CollabConflictError,
+} from './collab/text.js';
+import { type CollabOpenOptions, CollabUnknownError } from './collab/types.js';
 import { getBaseUrl, getConfigPath, getToken, saveConfig } from './config.js';
 
 // ---------------------------------------------------------------------------
@@ -881,18 +884,22 @@ export function registerCommands(program: Command): void {
     .argument('<target>', 'space:path or short URL')
     .option('--raw', 'Output raw content only')
     .option('--timeout <ms>', 'Open timeout in milliseconds', Number)
-    .action(async (target: string, opts: { raw?: boolean; timeout?: number }) => {
-      const open = await buildCollabOpenOptions(target, { timeout: opts.timeout });
-      await withCollabRoom(open, async (room) => {
-        const result = room.read();
-        if (!opts.raw) {
-          console.error(`collab_hash: ${result.collabHash}`);
-          console.error(`read_only: ${result.readOnly ? 'true' : 'false'}`);
-          console.error('---');
-        }
-        process.stdout.write(result.content);
-      });
-    });
+    .action(
+      async (target: string, opts: { raw?: boolean; timeout?: number }) => {
+        const open = await buildCollabOpenOptions(target, {
+          timeout: opts.timeout,
+        });
+        await withCollabRoom(open, async (room) => {
+          const result = room.read();
+          if (!opts.raw) {
+            console.error(`collab_hash: ${result.collabHash}`);
+            console.error(`read_only: ${result.readOnly ? 'true' : 'false'}`);
+            console.error('---');
+          }
+          process.stdout.write(result.content);
+        });
+      }
+    );
 
   collab
     .command('write')
@@ -916,7 +923,9 @@ export function registerCommands(program: Command): void {
           timeout?: number;
         }
       ) => {
-        const open = await buildCollabOpenOptions(target, { timeout: opts.timeout });
+        const open = await buildCollabOpenOptions(target, {
+          timeout: opts.timeout,
+        });
         const body = content === '-' ? await readStdin() : content;
         if (Buffer.byteLength(body, 'utf-8') > MAX_SAVE_SIZE) {
           console.error(
@@ -977,7 +986,9 @@ export function registerCommands(program: Command): void {
     .argument('<target>', 'space:path or short URL')
     .option('--timeout <ms>', 'Open/publish timeout in milliseconds', Number)
     .action(async (target: string, opts: { timeout?: number }) => {
-      const open = await buildCollabOpenOptions(target, { timeout: opts.timeout });
+      const open = await buildCollabOpenOptions(target, {
+        timeout: opts.timeout,
+      });
       try {
         await withCollabRoom(open, async (room) => {
           const result = await room.publish(opts.timeout);
@@ -1008,7 +1019,11 @@ export function registerCommands(program: Command): void {
     )
     .option('--timeout <ms>', 'Open/publish timeout in milliseconds', Number)
     .action(
-      async (opts: { client: string; clientVersion: string; timeout?: number }) => {
+      async (opts: {
+        client: string;
+        clientVersion: string;
+        timeout?: number;
+      }) => {
         await startCollabBridge(async (target: string) => {
           const open = await buildCollabOpenOptions(target, {
             client: opts.client,

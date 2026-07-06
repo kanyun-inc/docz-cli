@@ -5,14 +5,17 @@ import {
 } from '@hocuspocus/provider';
 import WebSocket from 'ws';
 import * as Y from 'yjs';
-import { buildCollabDocumentName, normalizeCollabFilePath } from './roomName.js';
+import {
+  buildCollabDocumentName,
+  normalizeCollabFilePath,
+} from './roomName.js';
 import { collabHash, readText, replaceText } from './text.js';
 import {
-  CollabPublishError,
-  CollabUnknownError,
   type CollabOpenOptions,
+  CollabPublishError,
   type CollabPublishResult,
   type CollabReadResult,
+  CollabUnknownError,
   type CollabWriteResult,
 } from './types.js';
 
@@ -40,10 +43,17 @@ function wsUrl(baseUrl: string): string {
   return u.toString();
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  label: string
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<T>((_, reject) => {
-    timer = setTimeout(() => reject(new CollabUnknownError(`${label} timed out after ${ms}ms`)), ms);
+    timer = setTimeout(
+      () => reject(new CollabUnknownError(`${label} timed out after ${ms}ms`)),
+      ms
+    );
   });
   return Promise.race([promise, timeout]).finally(() => {
     if (timer) clearTimeout(timer);
@@ -81,12 +91,20 @@ export class CollabRoomClient {
       this.websocketProvider = websocketProvider;
       const provider = new HocuspocusProvider({
         websocketProvider,
-        name: buildCollabDocumentName(this.openOptions!.spaceId, this.openOptions!.path),
+        name: buildCollabDocumentName(
+          this.openOptions!.spaceId,
+          this.openOptions!.path
+        ),
         document: this.doc,
         token: () => this.openOptions!.token,
         onAuthenticated: () => {},
         onAuthenticationFailed: (data) => {
-          reject(new CollabPublishError(`collab authentication failed: ${data.reason}`, 'auth_failed'));
+          reject(
+            new CollabPublishError(
+              `collab authentication failed: ${data.reason}`,
+              'auth_failed'
+            )
+          );
         },
         onStatus: ({ status }) => {
           this.connected = status === 'connected';
@@ -122,9 +140,13 @@ export class CollabRoomClient {
     };
   }
 
-  write(content: string, opts: { baseHash?: string; force?: boolean } = {}): CollabWriteResult {
+  write(
+    content: string,
+    opts: { baseHash?: string; force?: boolean } = {}
+  ): CollabWriteResult {
     if (!this.openOptions) throw new Error('collab room is not open');
-    if (this.readOnly) throw new CollabPublishError('collab room is read-only', 'read_only');
+    if (this.readOnly)
+      throw new CollabPublishError('collab room is read-only', 'read_only');
     const result = replaceText(this.doc, content, {
       baseHash: opts.baseHash,
       force: opts.force,
@@ -139,14 +161,17 @@ export class CollabRoomClient {
   }
 
   async publish(timeoutMs?: number): Promise<CollabPublishResult> {
-    if (!this.provider || !this.openOptions) throw new Error('collab room is not open');
+    if (!this.provider || !this.openOptions)
+      throw new Error('collab room is not open');
     const reqId = randomUUID();
     const ms = timeoutMs ?? this.openOptions.timeoutMs ?? 30000;
 
     const result = new Promise<CollabPublishResult>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(reqId);
-        reject(new CollabUnknownError(`collab publish ack timed out after ${ms}ms`));
+        reject(
+          new CollabUnknownError(`collab publish ack timed out after ${ms}ms`)
+        );
       }, ms);
       this.pending.set(reqId, { resolve, reject, timer });
     });
@@ -165,7 +190,9 @@ export class CollabRoomClient {
   close(): void {
     for (const [reqId, pending] of this.pending) {
       clearTimeout(pending.timer);
-      pending.reject(new CollabUnknownError('collab room closed before publish ack'));
+      pending.reject(
+        new CollabUnknownError('collab room closed before publish ack')
+      );
       this.pending.delete(reqId);
     }
     this.provider?.destroy();
@@ -188,7 +215,10 @@ export class CollabRoomClient {
     this.pending.delete(msg.reqId);
     clearTimeout(pending.timer);
 
-    if (msg.type === 'publish_ack' || msg.type === 'recreate_after_delete_ack') {
+    if (
+      msg.type === 'publish_ack' ||
+      msg.type === 'recreate_after_delete_ack'
+    ) {
       pending.resolve({
         spaceId: this.openOptions!.spaceId,
         path: this.openOptions!.path,
@@ -199,7 +229,12 @@ export class CollabRoomClient {
       return;
     }
 
-    pending.reject(new CollabPublishError(`collab publish failed${msg.code ? `: ${msg.code}` : ''}`, msg.code));
+    pending.reject(
+      new CollabPublishError(
+        `collab publish failed${msg.code ? `: ${msg.code}` : ''}`,
+        msg.code
+      )
+    );
   }
 }
 
