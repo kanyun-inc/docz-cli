@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
 import { buildCollabDocumentName, normalizeCollabFilePath } from './roomName.js';
-import { CollabConflictError, collabHash, readText, replaceText } from './text.js';
+import {
+  CollabBaseHashRequiredError,
+  CollabConflictError,
+  collabHash,
+  readText,
+  replaceText,
+} from './text.js';
 
 describe('collab text helpers', () => {
   it('calculates stable sha256 hashes', () => {
@@ -27,6 +33,14 @@ describe('collab text helpers', () => {
     expect(() =>
       replaceText(doc, 'next', { baseHash: collabHash('old') })
     ).toThrow(CollabConflictError);
+    expect(readText(doc)).toBe('current');
+  });
+
+  it('requires a base hash unless force is explicit', () => {
+    const doc = new Y.Doc();
+    replaceText(doc, 'current', { force: true });
+
+    expect(() => replaceText(doc, 'next')).toThrow(CollabBaseHashRequiredError);
     expect(readText(doc)).toBe('current');
   });
 });

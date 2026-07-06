@@ -58,7 +58,7 @@ export async function startCollabBridge(openRoom: (target: string) => Promise<Co
         if (!room) throw new Error('room is not open');
         const content = String(req.params?.content ?? '');
         const baseHash = req.params?.base_hash ? String(req.params.base_hash) : undefined;
-        const result = room.write(content, { baseHash, force: !baseHash });
+        const result = room.write(content, { baseHash, force: req.params?.force === true });
         send({ id: req.id, result: { hash: result.collabHash } });
       } else if (req.method === 'publish') {
         if (!room) throw new Error('room is not open');

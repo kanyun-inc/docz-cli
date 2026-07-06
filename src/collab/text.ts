@@ -17,6 +17,15 @@ export class CollabConflictError extends Error {
   }
 }
 
+export class CollabBaseHashRequiredError extends Error {
+  constructor(public readonly currentHash: string) {
+    super(
+      `base_collab_hash is required unless force is explicitly enabled (current: ${currentHash})`
+    );
+    this.name = 'CollabBaseHashRequiredError';
+  }
+}
+
 export function getYText(doc: Y.Doc): Y.Text {
   return doc.getText('content');
 }
@@ -33,8 +42,14 @@ export function replaceText(
   const ytext = getYText(doc);
   const previous = ytext.toString();
   const previousHash = collabHash(previous);
-  if (!opts.force && opts.baseHash && previousHash !== opts.baseHash) {
-    throw new CollabConflictError(previousHash, opts.baseHash);
+  const baseHash = opts.baseHash;
+  if (!opts.force) {
+    if (!baseHash) {
+      throw new CollabBaseHashRequiredError(previousHash);
+    }
+    if (previousHash !== baseHash) {
+      throw new CollabConflictError(previousHash, baseHash);
+    }
   }
 
   doc.transact(() => {

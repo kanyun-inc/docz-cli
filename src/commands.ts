@@ -8,7 +8,7 @@ import type { Command } from 'commander';
 import { ConflictError, DocSyncClient } from './client.js';
 import { startCollabBridge } from './collab/bridge.js';
 import { CollabRoomClient, withCollabRoom } from './collab/room.js';
-import { CollabConflictError } from './collab/text.js';
+import { CollabBaseHashRequiredError, CollabConflictError } from './collab/text.js';
 import { CollabUnknownError, type CollabOpenOptions } from './collab/types.js';
 import { getBaseUrl, getConfigPath, getToken, saveConfig } from './config.js';
 
@@ -949,6 +949,12 @@ export function registerCommands(program: Command): void {
           if (err instanceof CollabConflictError) {
             console.error(
               `Error: collaborative document changed. Re-read and retry. current=${err.currentHash} base=${err.baseHash}`
+            );
+            process.exit(1);
+          }
+          if (err instanceof CollabBaseHashRequiredError) {
+            console.error(
+              `Error: --base-collab-hash is required unless --force is set. Re-read first to get the latest hash. current=${err.currentHash}`
             );
             process.exit(1);
           }

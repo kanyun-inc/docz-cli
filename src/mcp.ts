@@ -17,7 +17,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { ConflictError, DocSyncClient } from './client.js';
 import { withCollabRoom } from './collab/room.js';
-import { CollabConflictError } from './collab/text.js';
+import { CollabBaseHashRequiredError, CollabConflictError } from './collab/text.js';
 import { CollabUnknownError } from './collab/types.js';
 import { markdownImageRef, parseExpires, readImageFile } from './commands.js';
 import { getBaseUrl, getToken } from './config.js';
@@ -713,6 +713,11 @@ export async function startMcpServer(): Promise<void> {
             if (err instanceof CollabConflictError) {
               return fail(
                 `协同冲突：内容已变化。current=${err.currentHash} base=${err.baseHash}。请先用 docz_collab_read_file 重新读取，再合并修改后保存。`
+              );
+            }
+            if (err instanceof CollabBaseHashRequiredError) {
+              return fail(
+                `缺少 base_collab_hash：请先用 docz_collab_read_file 读取最新内容和 hash，再保存；只有明确需要覆盖时才传 force=true。current=${err.currentHash}`
               );
             }
             if (err instanceof CollabUnknownError) {
