@@ -16,8 +16,16 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { ConflictError, DocSyncClient } from './client.js';
+import { withCollabRoom } from './collab/room.js';
+import {
+  CollabBaseHashRequiredError,
+  CollabConflictError,
+} from './collab/text.js';
+import { CollabUnknownError } from './collab/types.js';
 import { markdownImageRef, parseExpires, readImageFile } from './commands.js';
 import { getBaseUrl, getToken } from './config.js';
+
+declare const __VERSION__: string;
 
 function getClient(): DocSyncClient {
   const token = getToken();
@@ -27,6 +35,16 @@ function getClient(): DocSyncClient {
     );
   }
   return new DocSyncClient(getBaseUrl(), token);
+}
+
+function getRequiredToken(): string {
+  const token = getToken();
+  if (!token) {
+    throw new Error(
+      'DOCSYNC_API_TOKEN not set. Run `docz login --token <token>` or set the env var.'
+    );
+  }
+  return token;
 }
 
 async function resolveSpaceId(
@@ -135,6 +153,81 @@ export async function startMcpServer(): Promise<void> {
             },
           },
           required: ['space', 'path', 'content'],
+        },
+      },
+      {
+        name: 'docz_collab_read_file',
+        description:
+          '通过实时协同房间读取 Docz 文档内容。返回第一行 [collab_hash: <hash>]，保存时请把该值作为 base_collab_hash 传入 docz_collab_save_file，以避免覆盖他人实时编辑',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            space: {
+              type: 'string',
+              description: 'Space 名称或 ID',
+            },
+            path: { type: 'string', description: '文件路径' },
+            timeout_ms: {
+              type: 'number',
+              description: '连接超时时间，默认 30000ms',
+            },
+          },
+          required: ['space', 'path'],
+        },
+      },
+      {
+        name: 'docz_collab_save_file',
+        description:
+          '通过实时协同房间保存文档内容，并默认 publish 到仓库。必须传入 docz_collab_read_file 返回的 base_collab_hash；如检测到内容已变更会返回冲突，需要重新读取后重试',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            space: {
+              type: 'string',
+              description: 'Space 名称或 ID',
+            },
+            path: { type: 'string', description: '文件路径' },
+            content: { type: 'string', description: '文件内容' },
+            base_collab_hash: {
+              type: 'string',
+              description: '读取时获得的 collab_hash',
+            },
+            force: {
+              type: 'boolean',
+              description: '跳过 collab_hash 冲突检测',
+              default: false,
+            },
+            publish: {
+              type: 'boolean',
+              description: '是否 flush 到仓库，默认 true',
+              default: true,
+            },
+            timeout_ms: {
+              type: 'number',
+              description: '连接/发布超时时间，默认 30000ms',
+            },
+          },
+          required: ['space', 'path', 'content', 'base_collab_hash'],
+        },
+      },
+      {
+        name: 'docz_collab_publish',
+        description:
+          '将实时协同房间里的最新内容 flush 到仓库。若超时返回未知态，调用方应重新读取确认状态后再决定是否重试',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            space: {
+              type: 'string',
+              description: 'Space 名称或 ID',
+            },
+            path: { type: 'string', description: '文件路径' },
+            timeout_ms: {
+              type: 'number',
+              description: '连接/发布超时时间，默认 30000ms',
+            },
+          },
+          required: ['space', 'path'],
         },
       },
       {
@@ -552,6 +645,127 @@ export async function startMcpServer(): Promise<void> {
             if (err instanceof ConflictError) {
               return fail(
                 `冲突：文件已被他人修改（当前 ref: ${err.detail.current_ref}）。请先用 docz_read_file 获取最新内容，重新修改后再保存。`
+              );
+            }
+            throw err;
+          }
+        }
+
+        case 'docz_collab_read_file': {
+          const sid = await resolveSpaceId(client, String(args.space));
+          const timeoutMs = args.timeout_ms
+            ? Number(args.timeout_ms)
+            : undefined;
+          return withCollabRoom(
+            {
+              baseUrl: getBaseUrl(),
+              token: getRequiredToken(),
+              spaceId: sid,
+              path: String(args.path),
+              client: 'docz-mcp',
+              clientVersion: __VERSION__,
+              timeoutMs,
+            },
+            async (room) => {
+              const result = room.read();
+              return ok(
+                `[collab_hash: ${result.collabHash}]\n[read_only: ${result.readOnly ? 'true' : 'false'}]\n\n${result.content}`
+              );
+            }
+          );
+        }
+
+        case 'docz_collab_save_file': {
+          const sid = await resolveSpaceId(client, String(args.space));
+          const saveContent = String(args.content);
+          if (Buffer.byteLength(saveContent, 'utf-8') > 2 * 1024 * 1024) {
+            return fail('内容超过 2MB 限制，请使用 docz_upload_file 上传');
+          }
+          const timeoutMs = args.timeout_ms
+            ? Number(args.timeout_ms)
+            : undefined;
+          try {
+            return await withCollabRoom(
+              {
+                baseUrl: getBaseUrl(),
+                token: getRequiredToken(),
+                spaceId: sid,
+                path: String(args.path),
+                client: 'docz-mcp',
+                clientVersion: __VERSION__,
+                timeoutMs,
+              },
+              async (room) => {
+                const write = room.write(saveContent, {
+                  baseHash: args.base_collab_hash
+                    ? String(args.base_collab_hash)
+                    : undefined,
+                  force: Boolean(args.force),
+                });
+                if (args.publish === false) {
+                  return ok(
+                    `已更新协同房间: ${args.path} (collab_hash: ${write.collabHash})`
+                  );
+                }
+                const published = await room.publish(timeoutMs);
+                const backup = published.externalBackup
+                  ? `\nexternal_backup: ${published.externalBackup}`
+                  : '';
+                return ok(
+                  `已协同保存: ${published.path}\nref: ${published.ref}\ncollab_hash: ${write.collabHash}${backup}`
+                );
+              }
+            );
+          } catch (err) {
+            if (err instanceof CollabConflictError) {
+              return fail(
+                `协同冲突：内容已变化。current=${err.currentHash} base=${err.baseHash}。请先用 docz_collab_read_file 重新读取，再合并修改后保存。`
+              );
+            }
+            if (err instanceof CollabBaseHashRequiredError) {
+              return fail(
+                `缺少 base_collab_hash：请先用 docz_collab_read_file 读取最新内容和 hash，再保存；只有明确需要覆盖时才传 force=true。current=${err.currentHash}`
+              );
+            }
+            if (err instanceof CollabUnknownError) {
+              return fail(
+                `未知态：${err.message}。服务端可能已经处理 publish，请先重新读取确认状态后再重试。`
+              );
+            }
+            throw err;
+          }
+        }
+
+        case 'docz_collab_publish': {
+          const sid = await resolveSpaceId(client, String(args.space));
+          const timeoutMs = args.timeout_ms
+            ? Number(args.timeout_ms)
+            : undefined;
+          try {
+            return await withCollabRoom(
+              {
+                baseUrl: getBaseUrl(),
+                token: getRequiredToken(),
+                spaceId: sid,
+                path: String(args.path),
+                client: 'docz-mcp',
+                clientVersion: __VERSION__,
+                timeoutMs,
+              },
+              async (room) => {
+                const result = await room.publish(timeoutMs);
+                const backup = result.externalBackup
+                  ? `\nexternal_backup: ${result.externalBackup}`
+                  : '';
+                return ok(
+                  `已发布: ${result.path}\nref: ${result.ref}${backup}`
+                );
+              }
+            );
+          } catch (err) {
+            if (err instanceof CollabUnknownError) {
+              return fail(
+                `未知态：${err.message}。服务端可能已经处理 publish，请先重新读取确认状态后再重试。`
               );
             }
             throw err;

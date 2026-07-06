@@ -13,7 +13,8 @@
     ".": "./dist/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "plugins"
   ],
   "repository": {
     "type": "git",
@@ -40,13 +41,17 @@
     "release": "pnpm build && changeset publish"
   },
   "dependencies": {
+    "@hocuspocus/provider": "^2.15.3",
     "@modelcontextprotocol/sdk": "^1.28.0",
-    "commander": "^13.1.0"
+    "commander": "^13.1.0",
+    "ws": "^8.21.0",
+    "yjs": "^13.6.31"
   },
   "devDependencies": {
     "@biomejs/biome": "2.2.0",
     "@changesets/cli": "^2.31.0",
     "@types/node": "^22.15.0",
+    "@types/ws": "^8.18.1",
     "msw": "^2.8.4",
     "tsup": "^8.4.0",
     "typescript": "^5.8.2",
