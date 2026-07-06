@@ -6,11 +6,17 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename } from 'node:path';
 import type { Command } from 'commander';
 import { ConflictError, DocSyncClient } from './client.js';
+import { startCollabBridge } from './collab/bridge.js';
+import { CollabRoomClient, withCollabRoom } from './collab/room.js';
+import { CollabConflictError } from './collab/text.js';
+import { CollabUnknownError, type CollabOpenOptions } from './collab/types.js';
 import { getBaseUrl, getConfigPath, getToken, saveConfig } from './config.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+declare const __VERSION__: string;
 
 function getClient(): DocSyncClient {
   const token = getToken();
@@ -22,6 +28,38 @@ function getClient(): DocSyncClient {
     process.exit(1);
   }
   return new DocSyncClient(getBaseUrl(), token);
+}
+
+function getRequiredToken(): string {
+  const token = getToken();
+  if (!token) {
+    console.error(
+      'Error: No token configured.\n' +
+        'Run `docz login` or set DOCSYNC_API_TOKEN environment variable.'
+    );
+    process.exit(1);
+  }
+  return token;
+}
+
+async function buildCollabOpenOptions(
+  target: string,
+  opts: { client?: string; clientVersion?: string; timeout?: number } = {}
+): Promise<CollabOpenOptions> {
+  const api = getClient();
+  const { spaceId, path } = await resolveTarget(api, [target]);
+  if (!path) {
+    throw new Error('file path is required for collaborative editing');
+  }
+  return {
+    baseUrl: getBaseUrl(),
+    token: getRequiredToken(),
+    spaceId,
+    path,
+    client: opts.client ?? 'docz-cli',
+    clientVersion: opts.clientVersion ?? __VERSION__,
+    timeoutMs: opts.timeout,
+  };
 }
 
 /** Parse "space:path" or "space path" format */
@@ -829,6 +867,154 @@ export function registerCommands(program: Command): void {
       const ref = await client.getFileRef(spaceId, path);
       console.log(ref.url);
     });
+
+  // --- collaborative editing ---
+  const collab = program
+    .command('collab')
+    .description('Collaborative editing via Docz realtime rooms');
+
+  collab
+    .command('cat')
+    .description(
+      'Read collaborative document — docz collab cat <space>:<path> or <url>'
+    )
+    .argument('<target>', 'space:path or short URL')
+    .option('--raw', 'Output raw content only')
+    .option('--timeout <ms>', 'Open timeout in milliseconds', Number)
+    .action(async (target: string, opts: { raw?: boolean; timeout?: number }) => {
+      const open = await buildCollabOpenOptions(target, { timeout: opts.timeout });
+      await withCollabRoom(open, async (room) => {
+        const result = room.read();
+        if (!opts.raw) {
+          console.error(`collab_hash: ${result.collabHash}`);
+          console.error(`read_only: ${result.readOnly ? 'true' : 'false'}`);
+          console.error('---');
+        }
+        process.stdout.write(result.content);
+      });
+    });
+
+  collab
+    .command('write')
+    .description(
+      'Write collaborative document — docz collab write <space>:<path> <content>'
+    )
+    .argument('<target>', 'space:path or short URL')
+    .argument('<content>', 'File content (or - for stdin)')
+    .option('--base-collab-hash <hash>', 'Hash returned by docz collab cat')
+    .option('--force', 'Skip collaborative hash conflict detection')
+    .option('--no-publish', 'Only update realtime room, do not flush to repo')
+    .option('--timeout <ms>', 'Open/publish timeout in milliseconds', Number)
+    .action(
+      async (
+        target: string,
+        content: string,
+        opts: {
+          baseCollabHash?: string;
+          force?: boolean;
+          publish?: boolean;
+          timeout?: number;
+        }
+      ) => {
+        const open = await buildCollabOpenOptions(target, { timeout: opts.timeout });
+        const body = content === '-' ? await readStdin() : content;
+        if (Buffer.byteLength(body, 'utf-8') > MAX_SAVE_SIZE) {
+          console.error(
+            'Error: content exceeds 2MB limit. Use `docz upload` for large files.'
+          );
+          process.exit(1);
+        }
+
+        try {
+          await withCollabRoom(open, async (room) => {
+            const write = room.write(body, {
+              baseHash: opts.baseCollabHash,
+              force: opts.force,
+            });
+            if (opts.publish === false) {
+              console.log(
+                `Updated collaborative room (collab_hash: ${write.collabHash})`
+              );
+              return;
+            }
+            const published = await room.publish(opts.timeout);
+            console.log(
+              `Published: ${published.path} (ref: ${published.ref}, collab_hash: ${write.collabHash})`
+            );
+            if (published.externalBackup) {
+              console.log(`External backup: ${published.externalBackup}`);
+            }
+          });
+        } catch (err) {
+          if (err instanceof CollabConflictError) {
+            console.error(
+              `Error: collaborative document changed. Re-read and retry. current=${err.currentHash} base=${err.baseHash}`
+            );
+            process.exit(1);
+          }
+          if (err instanceof CollabUnknownError) {
+            console.error(
+              `Unknown state: ${err.message}. The server may have processed the publish; please re-read before retrying.`
+            );
+            process.exit(75);
+          }
+          throw err;
+        }
+      }
+    );
+
+  collab
+    .command('publish')
+    .description(
+      'Flush collaborative document to repo — docz collab publish <space>:<path>'
+    )
+    .argument('<target>', 'space:path or short URL')
+    .option('--timeout <ms>', 'Open/publish timeout in milliseconds', Number)
+    .action(async (target: string, opts: { timeout?: number }) => {
+      const open = await buildCollabOpenOptions(target, { timeout: opts.timeout });
+      try {
+        await withCollabRoom(open, async (room) => {
+          const result = await room.publish(opts.timeout);
+          console.log(`Published: ${result.path} (ref: ${result.ref})`);
+          if (result.externalBackup) {
+            console.log(`External backup: ${result.externalBackup}`);
+          }
+        });
+      } catch (err) {
+        if (err instanceof CollabUnknownError) {
+          console.error(
+            `Unknown state: ${err.message}. The server may have processed the publish; please re-read before retrying.`
+          );
+          process.exit(75);
+        }
+        throw err;
+      }
+    });
+
+  collab
+    .command('bridge')
+    .description('Start local JSONL bridge for terminal editors')
+    .option('--client <name>', 'Client name sent to Docz', 'docz.nvim')
+    .option(
+      '--client-version <version>',
+      'Client version sent to Docz',
+      __VERSION__
+    )
+    .option('--timeout <ms>', 'Open/publish timeout in milliseconds', Number)
+    .action(
+      async (opts: { client: string; clientVersion: string; timeout?: number }) => {
+        await startCollabBridge(async (target: string) => {
+          const open = await buildCollabOpenOptions(target, {
+            client: opts.client,
+            clientVersion: opts.clientVersion,
+            timeout: opts.timeout,
+          });
+          const room = new CollabRoomClient();
+          await room.open(open);
+          return room;
+        });
+      }
+    );
 
   // --- diff ---
   program
