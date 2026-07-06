@@ -1,6 +1,6 @@
 ---
 name: docz
-description: Read, write, and collaboratively edit company DocSync documents. Triggers on "docs", "documents", "upload file", "read space", "docz", "DocSync", "save file", "rollback", "restore", "trash", "version history", "comment", "share link", "diff", "collab", "collaborative editing", "MCP", "Neovim"
+description: Read, write, and collaboratively edit company DocSync documents. Triggers on "docs", "documents", "upload file", "read space", "docz", "DocSync", "save file", "rollback", "restore", "trash", "version history", "comment", "share link", "diff", "collab", "collaborative editing", "Neovim"
 version: 0.14.0
 author: kris
 tags:
@@ -9,13 +9,13 @@ tags:
   - file-sync
   - knowledge
 user-invocable: true
-argument-hint: "spaces | whoami | ls/cat/write/upload/mkdir/mv/rm/log/rollback/trash/restore/shortlink/diff | collab cat/write/publish/bridge | mcp | comment <subcmd> | share <subcmd>"
+argument-hint: "spaces | whoami | ls/cat/write/upload/mkdir/mv/rm/log/rollback/trash/restore/shortlink/diff | collab cat/write/publish/bridge | comment <subcmd> | share <subcmd>"
 allowed-tools: Bash(*)
 ---
 
 # DocSync — Read & Write Company Documents
 
-CLI tool `docz-cli` for reading, writing, and collaboratively editing files in DocSync (docz.zhenguanyu.com). Outputs to stdout, reads from stdin, and includes MCP + realtime collab support for AI agents and terminal editors.
+CLI tool `docz-cli` for reading, writing, and collaboratively editing files in DocSync (docz.zhenguanyu.com). Outputs to stdout, reads from stdin, and includes realtime collab support for AI agents and terminal editors.
 
 ## Auth Check
 
@@ -89,7 +89,6 @@ npx docz-cli@latest rm <space>:<path>                     # delete (30-day trash
 npx docz-cli@latest log <space>[:<path>]                  # change history
 npx docz-cli@latest diff <space>[:<path>] <commit> [<from>]  # view changes
 npx docz-cli@latest shortlink <space>:<path>              # get short URL
-npx docz-cli@latest mcp                                   # start MCP stdio server
 ```
 
 ### Safe Write (with conflict detection)
@@ -183,42 +182,6 @@ npx docz-cli@latest diff G160-研发:docs/guide.md af0fb9b          # file-level
 npx docz-cli@latest diff G160-研发:docs/guide.md af0fb9b b2c3d4e  # compare two commits
 npx docz-cli@latest diff G160-研发 af0fb9b                         # space-level: which files changed
 ```
-
-### MCP Server
-
-Start the stdio MCP server for AI agents:
-
-```bash
-npx docz-cli@latest mcp
-```
-
-Recommended MCP configuration:
-
-```json
-{
-  "mcpServers": {
-    "docz-mcp": {
-      "command": "npx",
-      "args": ["-y", "docz-cli@latest", "mcp"],
-      "env": {
-        "DOCSYNC_API_TOKEN": "<your-token>"
-      }
-    }
-  }
-}
-```
-
-MCP tools include regular document operations plus realtime collaborative operations:
-
-- `docz_list_spaces`, `docz_list_files`, `docz_read_file`, `docz_save_file`
-- `docz_upload_file`, `docz_upload_image`, `docz_mkdir`, `docz_delete`
-- `docz_file_history`, `docz_diff`, `docz_shortlink`
-- `docz_share_create`, `docz_share_list`, `docz_share_read`, `docz_share_info`, `docz_share_delete`
-- `docz_collab_read_file` — read realtime room content and return `collab_hash`
-- `docz_collab_save_file` — write realtime room content with required `base_collab_hash`, publishes by default
-- `docz_collab_publish` — flush realtime room content to the repo
-
-For MCP agents, prefer the collab tools when the user is actively editing in Web/CLI/Neovim or asks for collaborative behavior. Always pass `base_collab_hash` returned by `docz_collab_read_file` unless the user explicitly asks to force overwrite.
 
 ### Neovim / Terminal Editor Bridge
 
