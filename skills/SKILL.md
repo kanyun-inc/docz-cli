@@ -1,7 +1,7 @@
 ---
 name: docz
-description: Read and write company DocSync documents. Triggers on "docs", "documents", "upload file", "read space", "docz", "DocSync", "save file", "rollback", "restore", "trash", "version history", "comment", "share link", "diff"
-version: 0.13.0
+description: Read, write, and collaboratively edit company DocSync documents. Triggers on "docs", "documents", "upload file", "read space", "docz", "DocSync", "save file", "rollback", "restore", "trash", "version history", "comment", "share link", "diff", "collab", "collaborative editing", "Neovim"
+version: 0.15.0
 author: kris
 tags:
   - docsync
@@ -9,13 +9,13 @@ tags:
   - file-sync
   - knowledge
 user-invocable: true
-argument-hint: "spaces | whoami | ls/cat/write/upload/mkdir/mv/rm/log/rollback/trash/restore/shortlink/diff | comment <subcmd> | share <subcmd>"
+argument-hint: "spaces | whoami | ls/cat/write/upload/mkdir/mv/rm/log/rollback/trash/restore/shortlink/diff | collab cat/write/publish/bridge | comment <subcmd> | share <subcmd>"
 allowed-tools: Bash(*)
 ---
 
 # DocSync — Read & Write Company Documents
 
-CLI tool `docz-cli` for reading and writing files in DocSync (docz.zhenguanyu.com). Outputs to stdout, reads from stdin — designed to compose with Unix pipes.
+CLI tool `docz-cli` for reading, writing, and collaboratively editing files in DocSync (docz.zhenguanyu.com). Outputs to stdout, reads from stdin, and includes realtime collab support for AI agents and terminal editors.
 
 ## Auth Check
 
@@ -64,6 +64,7 @@ npx docz-cli@latest cat https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c
 npx docz-cli@latest cat https://docz.zhenguanyu.com/s/yanfa/docs/guide.md
 npx docz-cli@latest ls https://docz.zhenguanyu.com/s/yanfa
 npx docz-cli@latest write https://docz.zhenguanyu.com/s/yanfa/docs/guide.md 'new content'
+npx docz-cli@latest collab cat https://docz.zhenguanyu.com/s/yanfa/docs/guide.md
 npx docz-cli@latest rm https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c
 npx docz-cli@latest diff https://docz.zhenguanyu.com/s/yanfa/docs/guide.md abc1234
 npx docz-cli@latest trash https://docz.zhenguanyu.com/s/yanfa
@@ -107,6 +108,65 @@ npx docz-cli@latest write --force <space>:<path> '<text>' # skip conflict detect
 
 Use `cat --ref` only if you need to display or log the Git ref; the safe-edit workflow above does not require it. Use `--force` only when you intentionally want to overwrite (e.g. fully regenerated content). Content limit: **2MB** — use `upload` for larger files.
 
+### Realtime Collaborative Editing
+
+For AI edits to existing text documents, prefer the `collab` path by default. It connects to the Docz realtime room over WebSocket, so it sees browser/editor content that may not have been flushed to Git yet and avoids the plain-save path that can create `.conflict.web` copies.
+
+Use plain `cat/write` only when the edit is a simple one-shot update where no browser/editor room is expected and only persisted Git content matters.
+
+```bash
+npx docz-cli@latest collab cat <space>:<path>                         # read realtime room content, prints collab_hash to stderr
+npx docz-cli@latest collab write <space>:<path> '<text>' --base-collab-hash <hash>
+npx docz-cli@latest collab write <space>:<path> - --base-collab-hash <hash>
+npx docz-cli@latest collab write --no-publish <space>:<path> '<text>' --base-collab-hash <hash>
+npx docz-cli@latest collab publish <space>:<path>                     # flush realtime room to repo
+npx docz-cli@latest collab bridge                                     # local JSONL bridge for terminal editors
+```
+
+**Collaborative edit workflow**:
+
+1. `collab cat <space>:<path>` — read realtime content and capture `collab_hash` from stderr
+2. Apply your changes locally
+3. `collab write <space>:<path> - --base-collab-hash <hash>` — writes into the realtime room and publishes by default
+4. On conflict: re-run `collab cat`, re-apply the change to the latest realtime content, then retry
+5. On "Unknown state" / exit code 75: re-read before retrying because the server may already have processed the publish
+
+**Agent-friendly read/write pattern**:
+
+```bash
+npx docz-cli@latest collab cat <target> > /tmp/docz-content.md 2> /tmp/docz-meta.txt
+```
+
+Edit `/tmp/docz-content.md`. Read `/tmp/docz-meta.txt` to get metadata:
+
+```text
+collab_hash: sha256:...
+read_only: false
+---
+```
+
+Extract `collab_hash`, then write back from stdin:
+
+```bash
+cat /tmp/docz-content.md | npx docz-cli@latest collab write <target> - --base-collab-hash <hash>
+```
+
+For collaborative edits that need to write back, always use normal `collab cat` first so the agent can capture `collab_hash`, then use `collab write --base-collab-hash`. Use `--force` only when intentionally replacing current realtime content. Use `--no-publish` when updating the room without flushing to Git yet. After a successful publish, commit history should show the client source in the commit message, for example `web: collab edit ...` or CLI/client-specific metadata if supported by the server.
+
+**Write strategy**:
+
+- Prefer `collab cat/write` for editing existing DocSync text documents, especially `.md`, `.txt`, `.csv`, `.html`, and docs the user may have open in Web.
+- Always use `collab cat/write` when the user mentions collaboration, browser editing, CLI + browser testing, conflicts, shared editing, or reducing conflict files.
+- Use plain `cat/write` only for simple one-shot updates where no active editor is expected.
+- Do not mix `cat` + `collab write`; use `collab cat` to get `collab_hash`.
+- Do not mix `collab cat` + plain `write` unless the user explicitly wants to bypass the realtime room.
+
+**Connection lifecycle**:
+
+- `collab cat`, `collab write`, and `collab publish` are short-lived commands: they open a WebSocket, finish the operation, then close it automatically.
+- `collab bridge` is long-lived. It opens a realtime room and keeps the WebSocket alive until `close`, stdin EOF, or process exit.
+- There is no CLI-side idle auto-close for bridge. If a test or editor integration needs "edit, wait 10 seconds, then close", the bridge caller must send `close` after waiting.
+
 ### Version Management
 
 ```bash
@@ -134,6 +194,7 @@ npx docz-cli@latest comment rm <space> <id>               # delete comment
 
 ```bash
 npx docz-cli@latest share create <space>:<path> [--expires 7d] [--users user@co.com]
+npx docz-cli@latest share create <url> [--expires 7d]      # create share link from normal DocSync URL
 npx docz-cli@latest share list <space> [--file <path>]
 npx docz-cli@latest share update <space> <link-id> [--expires 30d]
 npx docz-cli@latest share cat <token-or-url> [--raw]
@@ -150,6 +211,25 @@ npx docz-cli@latest diff G160-研发:docs/guide.md af0fb9b          # file-level
 npx docz-cli@latest diff G160-研发:docs/guide.md af0fb9b b2c3d4e  # compare two commits
 npx docz-cli@latest diff G160-研发 af0fb9b                         # space-level: which files changed
 ```
+
+### Neovim / Terminal Editor Bridge
+
+The repo includes a minimal `docz.nvim` plugin under `plugins/nvim`. It shells out to `docz collab bridge`, which speaks local JSONL over stdio and keeps the Neovim buffer connected to the Docz realtime room. Use bridge only for real terminal editor integrations; for ordinary AI/scripted edits, use `collab cat/write`.
+
+```vim
+:DoczCollabOpen <space>:<path>
+:DoczCollabPublish
+:DoczCollabStatus
+:DoczCollabClose
+```
+
+Bridge protocol summary for editor integrations:
+
+- `open` opens the realtime room and returns content/hash.
+- `local_change` sends local buffer content with `base_hash`.
+- `publish` flushes the room to the Docz repository.
+- `status` reports connection/read state.
+- `close` closes the realtime room.
 
 ## Unix Pipes
 
@@ -193,8 +273,10 @@ done | npx docz-cli@latest write G160-研发:full-report.md -
 - `cat` returns raw text — pipe to `head`, `tail`, `grep`, `awk`, `sed`, `wc`, `sort`, `uniq` as needed.
 - For CSV data, use `cut`, `awk`, and `sort`.
 - `write` overwrites the entire file (not append). To append, `cat` first, combine, then `write` back.
+- For active collaborative editing, use `collab cat` + `collab write --base-collab-hash`; this reads and writes the realtime room over WebSocket.
 - `write` has a 2MB limit. For larger files, use `upload`.
 - `write` detects concurrent edits automatically. If conflict occurs, re-read and retry.
+- `collab write` requires `--base-collab-hash` unless `--force` is set. If conflict occurs, re-run `collab cat` and retry against the latest realtime content.
 - `rm` moves to trash (recoverable for 30 days), not permanent delete. Use `trash` + `restore` to recover.
 - Text files (.md, .csv, .html) work with `cat`. Binary files (images, PDF) use `upload` only.
 - To embed images in a Markdown document, first run `image upload <file>` to get a permanent public URL, then write `![alt](url)` into the document. Images go to OSS (not the Space): no Space quota, and visible in share links / blogs without login. Supports png/jpg/webp, max 5MB.

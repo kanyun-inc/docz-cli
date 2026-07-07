@@ -1,5 +1,11 @@
 # docz-cli
 
+## 0.10.0
+
+### Minor Changes
+
+- 164d99d: Add realtime collaborative editing CLI, MCP tools, and bridge support.
+
 ## 0.9.0
 
 ### Minor Changes
