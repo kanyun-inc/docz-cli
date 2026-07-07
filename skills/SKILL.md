@@ -1,7 +1,7 @@
 ---
 name: docz
 description: Read, write, and collaboratively edit company DocSync documents. Triggers on "docs", "documents", "upload file", "read space", "docz", "DocSync", "save file", "rollback", "restore", "trash", "version history", "comment", "share link", "diff", "collab", "collaborative editing", "Neovim"
-version: 0.14.0
+version: 0.15.0
 author: kris
 tags:
   - docsync
@@ -110,11 +110,12 @@ Use `cat --ref` only if you need to display or log the Git ref; the safe-edit wo
 
 ### Realtime Collaborative Editing
 
-Use `collab` commands when the user is editing the same document in the browser, when multiple agents/people may edit at the same time, or when the task explicitly mentions collaborative editing. These commands connect to the Docz realtime room over WebSocket, so they see unflushed browser/editor content, not only the latest Git commit.
+For AI edits to existing text documents, prefer the `collab` path by default. It connects to the Docz realtime room over WebSocket, so it sees browser/editor content that may not have been flushed to Git yet and avoids the plain-save path that can create `.conflict.web` copies.
+
+Use plain `cat/write` only when the edit is a simple one-shot update where no browser/editor room is expected and only persisted Git content matters.
 
 ```bash
 npx docz-cli@latest collab cat <space>:<path>                         # read realtime room content, prints collab_hash to stderr
-npx docz-cli@latest collab cat --raw <space>:<path>                    # raw content only
 npx docz-cli@latest collab write <space>:<path> '<text>' --base-collab-hash <hash>
 npx docz-cli@latest collab write <space>:<path> - --base-collab-hash <hash>
 npx docz-cli@latest collab write --no-publish <space>:<path> '<text>' --base-collab-hash <hash>
@@ -130,14 +131,41 @@ npx docz-cli@latest collab bridge                                     # local JS
 4. On conflict: re-run `collab cat`, re-apply the change to the latest realtime content, then retry
 5. On "Unknown state" / exit code 75: re-read before retrying because the server may already have processed the publish
 
-Use `--force` only when intentionally replacing current realtime content. Use `--no-publish` when updating the room without flushing to Git yet. After a successful publish, commit history should show the client source in the commit message, for example `web: collab edit ...` or CLI/client-specific metadata if supported by the server.
+**Agent-friendly read/write pattern**:
 
-**Choosing write vs collab write**:
+```bash
+npx docz-cli@latest collab cat <target> > /tmp/docz-content.md 2> /tmp/docz-meta.txt
+```
 
-- Prefer `write` for one-shot file updates where only persisted Git content matters.
-- Prefer `collab cat/write` when a browser/editor room may be open, when the user asks to test browser + CLI collaboration, or when avoiding `.external` conflicts is important.
+Edit `/tmp/docz-content.md`. Read `/tmp/docz-meta.txt` to get metadata:
+
+```text
+collab_hash: sha256:...
+read_only: false
+---
+```
+
+Extract `collab_hash`, then write back from stdin:
+
+```bash
+cat /tmp/docz-content.md | npx docz-cli@latest collab write <target> - --base-collab-hash <hash>
+```
+
+For collaborative edits that need to write back, always use normal `collab cat` first so the agent can capture `collab_hash`, then use `collab write --base-collab-hash`. Use `--force` only when intentionally replacing current realtime content. Use `--no-publish` when updating the room without flushing to Git yet. After a successful publish, commit history should show the client source in the commit message, for example `web: collab edit ...` or CLI/client-specific metadata if supported by the server.
+
+**Write strategy**:
+
+- Prefer `collab cat/write` for editing existing DocSync text documents, especially `.md`, `.txt`, `.csv`, `.html`, and docs the user may have open in Web.
+- Always use `collab cat/write` when the user mentions collaboration, browser editing, CLI + browser testing, conflicts, shared editing, or reducing conflict files.
+- Use plain `cat/write` only for simple one-shot updates where no active editor is expected.
 - Do not mix `cat` + `collab write`; use `collab cat` to get `collab_hash`.
 - Do not mix `collab cat` + plain `write` unless the user explicitly wants to bypass the realtime room.
+
+**Connection lifecycle**:
+
+- `collab cat`, `collab write`, and `collab publish` are short-lived commands: they open a WebSocket, finish the operation, then close it automatically.
+- `collab bridge` is long-lived. It opens a realtime room and keeps the WebSocket alive until `close`, stdin EOF, or process exit.
+- There is no CLI-side idle auto-close for bridge. If a test or editor integration needs "edit, wait 10 seconds, then close", the bridge caller must send `close` after waiting.
 
 ### Version Management
 
@@ -166,6 +194,7 @@ npx docz-cli@latest comment rm <space> <id>               # delete comment
 
 ```bash
 npx docz-cli@latest share create <space>:<path> [--expires 7d] [--users user@co.com]
+npx docz-cli@latest share create <url> [--expires 7d]      # create share link from normal DocSync URL
 npx docz-cli@latest share list <space> [--file <path>]
 npx docz-cli@latest share update <space> <link-id> [--expires 30d]
 npx docz-cli@latest share cat <token-or-url> [--raw]
@@ -185,7 +214,7 @@ npx docz-cli@latest diff G160-研发 af0fb9b                         # space-lev
 
 ### Neovim / Terminal Editor Bridge
 
-The repo includes a minimal `docz.nvim` plugin under `plugins/nvim`. It shells out to `docz collab bridge`, which speaks local JSONL over stdio and keeps the Neovim buffer connected to the Docz realtime room.
+The repo includes a minimal `docz.nvim` plugin under `plugins/nvim`. It shells out to `docz collab bridge`, which speaks local JSONL over stdio and keeps the Neovim buffer connected to the Docz realtime room. Use bridge only for real terminal editor integrations; for ordinary AI/scripted edits, use `collab cat/write`.
 
 ```vim
 :DoczCollabOpen <space>:<path>
@@ -194,7 +223,13 @@ The repo includes a minimal `docz.nvim` plugin under `plugins/nvim`. It shells o
 :DoczCollabClose
 ```
 
-This is for true terminal realtime editing. For ordinary scripted edits, prefer `collab cat/write`; for editor UX, use the Neovim plugin.
+Bridge protocol summary for editor integrations:
+
+- `open` opens the realtime room and returns content/hash.
+- `local_change` sends local buffer content with `base_hash`.
+- `publish` flushes the room to the Docz repository.
+- `status` reports connection/read state.
+- `close` closes the realtime room.
 
 ## Unix Pipes
 
