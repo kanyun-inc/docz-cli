@@ -1,5 +1,11 @@
 # docz-cli
 
+## 0.10.1
+
+### Patch Changes
+
+- 1ed4123: Fix `log` commands crashing when the API returns commit history in the `commits` field, and include the commit author in CLI and MCP history output.
+
 ## 0.10.0
 
 ### Minor Changes
