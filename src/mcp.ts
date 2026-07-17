@@ -813,7 +813,9 @@ export async function startMcpServer(): Promise<void> {
             args.path ? String(args.path) : undefined
           );
           if (logs.length === 0) return ok('没有变更历史。');
-          const lines = logs.map((l) => `${l.hash}  ${l.date}  ${l.message}`);
+          const lines = logs.map(
+            (l) => `${l.hash}  ${l.date}  ${l.author}  ${l.message}`
+          );
           return ok(lines.join('\n'));
         }
 

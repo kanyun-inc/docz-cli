@@ -33,6 +33,10 @@ export interface LogEntry {
   num_files: number;
 }
 
+interface LogResponse {
+  commits: LogEntry[];
+}
+
 export interface TrashEntry {
   path: string;
   deleted_by: string;
@@ -402,7 +406,8 @@ export class DocSyncClient {
     const path = filepath
       ? `/api/spaces/${spaceId}/log/${encodeURIComponent(filepath)}`
       : `/api/spaces/${spaceId}/log/`;
-    return this.request(path);
+    const response = await this.request<LogResponse>(path);
+    return response.commits;
   }
 
   // --- Trash ---

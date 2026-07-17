@@ -220,9 +220,13 @@ const server = setupServer(
     });
   }),
 
-  http.get(`${BASE}/api/spaces/:sid/log/`, () => HttpResponse.json(mockLog)),
+  http.get(`${BASE}/api/spaces/:sid/log/`, () =>
+    HttpResponse.json({ commits: mockLog })
+  ),
 
-  http.get(`${BASE}/api/spaces/:sid/log/:fp`, () => HttpResponse.json(mockLog)),
+  http.get(`${BASE}/api/spaces/:sid/log/:fp`, () =>
+    HttpResponse.json({ commits: mockLog })
+  ),
 
   http.get(`${BASE}/api/spaces/:sid/trash`, () =>
     HttpResponse.json([
@@ -528,6 +532,16 @@ describe('DocSyncClient', () => {
   it('log() with filepath', async () => {
     const logs = await c.log(SID, 'README.md');
     expect(logs).toHaveLength(1);
+  });
+
+  it('log() returns an empty array when there is no history', async () => {
+    server.use(
+      http.get(`${BASE}/api/spaces/:sid/log/`, () =>
+        HttpResponse.json({ commits: [] })
+      )
+    );
+
+    await expect(c.log(SID)).resolves.toEqual([]);
   });
 
   it('trash() returns entries', async () => {
