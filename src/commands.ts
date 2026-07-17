@@ -535,7 +535,7 @@ export function registerCommands(program: Command): void {
         return;
       }
       for (const l of logs) {
-        console.log(`${l.hash}  ${l.date}  ${l.message}`);
+        console.log(`${l.hash}  ${l.date}  ${l.author}  ${l.message}`);
       }
     });
 
