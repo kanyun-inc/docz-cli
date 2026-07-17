@@ -100,6 +100,7 @@ export interface FileRef {
 export interface CatResult {
   content: string;
   ref: string;
+  file_ref?: string;
 }
 
 export interface UploadImageResult {
@@ -112,11 +113,13 @@ export interface UploadImageResult {
 export interface SaveResult {
   path: string;
   ref: string;
+  file_ref?: string;
 }
 
 export interface SaveConflict {
   error: 'conflict';
   current_ref: string;
+  current_file_ref?: string;
   path: string;
 }
 
@@ -285,7 +288,8 @@ export class DocSyncClient {
     }
     const content = await res.text();
     const ref = res.headers.get('X-Git-Ref') ?? '';
-    return { content, ref };
+    const fileRef = res.headers.get('X-File-Ref') ?? undefined;
+    return { content, ref, file_ref: fileRef };
   }
 
   // --- Write ---
@@ -330,10 +334,11 @@ export class DocSyncClient {
     spaceId: string,
     path: string,
     content: string,
-    opts?: { baseRef?: string; message?: string }
+    opts?: { baseRef?: string; baseFileRef?: string; message?: string }
   ): Promise<SaveResult> {
     const body: Record<string, string> = { path, content };
     if (opts?.baseRef) body.base_ref = opts.baseRef;
+    if (opts?.baseFileRef) body.base_file_ref = opts.baseFileRef;
     if (opts?.message) body.message = opts.message;
 
     const res = await fetch(

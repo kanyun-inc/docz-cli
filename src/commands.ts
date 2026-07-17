@@ -444,10 +444,12 @@ export function registerCommands(program: Command): void {
         }
 
         let baseRef: string | undefined;
+        let baseFileRef: string | undefined;
         if (!opts.force) {
           try {
             const existing = await client.catWithRef(spaceId, path);
             baseRef = existing.ref;
+            baseFileRef = existing.file_ref;
           } catch (err) {
             const msg = err instanceof Error ? err.message : '';
             if (!msg.includes('404')) throw err;
@@ -457,13 +459,16 @@ export function registerCommands(program: Command): void {
         try {
           const result = await client.save(spaceId, path, body, {
             baseRef,
+            baseFileRef,
             message: opts.message,
           });
           console.log(`Written: ${result.path} (ref: ${result.ref})`);
         } catch (err) {
           if (err instanceof ConflictError) {
+            const current = err.detail.current_file_ref || err.detail.current_ref;
+            const basedOn = baseFileRef || baseRef || 'unknown';
             console.error(
-              'Error: file was modified by someone else. Please re-read the latest content and try again.'
+              `Error: file was modified by someone else. Current file ref is ${current}; you wrote based on ${basedOn}. Run \`docz cat ${target}\` to fetch latest and retry.`
             );
             process.exit(1);
           }

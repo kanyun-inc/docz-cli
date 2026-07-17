@@ -117,7 +117,7 @@ export async function startMcpServer(): Promise<void> {
       {
         name: 'docz_read_file',
         description:
-          '读取 DocSync 文件内容（Markdown、CSV、HTML 等文本文件）。返回格式：第一行 [ref: <commit_hash>]，空行后是文件内容。保存时请将 ref 值作为 base_ref 传入 docz_save_file 以检测冲突',
+          '读取 DocSync 文件内容（Markdown、CSV、HTML 等文本文件）。返回格式包含 [ref: <commit_hash>] 与 [file_ref: <content_ref>]；保存时优先将 file_ref 作为 base_file_ref 传入 docz_save_file 以检测文件级冲突',
         inputSchema: {
           type: 'object' as const,
           properties: {
@@ -133,7 +133,7 @@ export async function startMcpServer(): Promise<void> {
       {
         name: 'docz_save_file',
         description:
-          '保存/编辑文档内容（支持冲突检测）。建议先用 docz_read_file 获取 ref，再传入 base_ref 以检测并发冲突。如果返回冲突错误，请重新用 docz_read_file 获取最新内容，重新修改后再保存',
+          '保存/编辑文档内容（支持冲突检测）。建议先用 docz_read_file 获取 file_ref，再传入 base_file_ref 以检测文件级并发冲突；base_ref 保留兼容旧 commit ref',
         inputSchema: {
           type: 'object' as const,
           properties: {
@@ -145,7 +145,11 @@ export async function startMcpServer(): Promise<void> {
             content: { type: 'string', description: '文件内容' },
             base_ref: {
               type: 'string',
-              description: '读取时获得的 ref，用于冲突检测（可选）',
+              description: '读取时获得的 commit ref，兼容旧冲突检测（可选）',
+            },
+            base_file_ref: {
+              type: 'string',
+              description: '读取时获得的 file_ref，用于文件级冲突检测（可选，优先）',
             },
             message: {
               type: 'string',
@@ -620,7 +624,10 @@ export async function startMcpServer(): Promise<void> {
         case 'docz_read_file': {
           const sid = await resolveSpaceId(client, String(args.space));
           const result = await client.catWithRef(sid, String(args.path));
-          const header = result.ref ? `[ref: ${result.ref}]\n\n` : '';
+          const header =
+            `${result.ref ? `[ref: ${result.ref}]\n` : ''}` +
+            `${result.file_ref ? `[file_ref: ${result.file_ref}]\n` : ''}` +
+            '\n';
           return ok(header + result.content);
         }
 
@@ -630,6 +637,9 @@ export async function startMcpServer(): Promise<void> {
           const saveContent = String(args.content);
           const saveMessage = args.message ? String(args.message) : undefined;
           const baseRef = args.base_ref ? String(args.base_ref) : undefined;
+          const baseFileRef = args.base_file_ref
+            ? String(args.base_file_ref)
+            : undefined;
 
           if (Buffer.byteLength(saveContent, 'utf-8') > 2 * 1024 * 1024) {
             return fail('内容超过 2MB 限制，请使用 docz_upload_file 上传');
@@ -638,13 +648,14 @@ export async function startMcpServer(): Promise<void> {
           try {
             const result = await client.save(sid, savePath, saveContent, {
               baseRef,
+              baseFileRef,
               message: saveMessage,
             });
             return ok(`已保存: ${result.path} (ref: ${result.ref})`);
           } catch (err) {
             if (err instanceof ConflictError) {
               return fail(
-                `冲突：文件已被他人修改（当前 ref: ${err.detail.current_ref}）。请先用 docz_read_file 获取最新内容，重新修改后再保存。`
+                `冲突：文件已被他人修改（当前 file_ref: ${err.detail.current_file_ref || err.detail.current_ref}）。请先用 docz_read_file 获取最新内容，重新修改后再保存。`
               );
             }
             throw err;
