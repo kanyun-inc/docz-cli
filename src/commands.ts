@@ -5,7 +5,12 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename } from 'node:path';
 import type { Command } from 'commander';
-import { ConflictError, DocSyncClient } from './client.js';
+import {
+  ConflictError,
+  DocSyncClient,
+  type LinkDiagnostic,
+  type ShareLinkInspection,
+} from './client.js';
 import { startCollabBridge } from './collab/bridge.js';
 import { CollabRoomClient, withCollabRoom } from './collab/room.js';
 import {
@@ -31,6 +36,10 @@ function getClient(): DocSyncClient {
     process.exit(1);
   }
   return new DocSyncClient(getBaseUrl(), token);
+}
+
+function getOptionalClient(): DocSyncClient {
+  return new DocSyncClient(getBaseUrl(), getToken() ?? '');
 }
 
 function getRequiredToken(): string {
@@ -204,10 +213,203 @@ export function parseExpires(value: string): string {
 }
 
 /** Extract share token from URL or return as-is */
-function extractShareToken(input: string): string {
+export function extractShareToken(input: string): string {
   const m = input.match(SHARE_URL_RE);
   if (m) return m[1];
   return input;
+}
+
+export type NormalLinkTarget =
+  | {
+      kind: 'file-ref';
+      slug: string;
+      fileId: string;
+      path: '';
+    }
+  | {
+      kind: 'path';
+      slug?: string;
+      spaceId?: string;
+      path: string;
+    };
+
+export interface NormalLinkInfo {
+  link_type: 'normal';
+  link_status: 'valid' | 'invalid' | 'unknown';
+  space_permission:
+    | 'accessible'
+    | 'inaccessible'
+    | 'not_applicable'
+    | 'unknown';
+  document_path: string | null;
+  document_status: 'exists' | 'not_found' | 'not_applicable' | 'unknown';
+  space_admin: { name: string | null; email: string | null } | null;
+  is_folder: boolean | null;
+}
+
+export interface ShareLinkInfo {
+  link_status: 'valid' | 'invalid' | 'expired' | 'unknown';
+  access_status: 'accessible' | 'login_required' | 'forbidden' | 'unknown';
+  visibility: 'public' | 'restricted' | null;
+  space_name: string | null;
+  document_path: string | null;
+  document_status: 'exists' | 'not_found' | 'unknown';
+  role: string | null;
+  shared_by: string | null;
+  expires_at: string | null;
+  is_folder: boolean | null;
+  has_space_access: boolean | null;
+}
+
+function decodePath(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    throw new Error(`Invalid URL path encoding: ${value}`);
+  }
+}
+
+/** Parse a normal Docz URL without making a network request. */
+export function parseNormalLink(input: string): NormalLinkTarget {
+  let pathname: string;
+  try {
+    pathname = new URL(input).pathname;
+  } catch {
+    throw new Error('Expected a full ordinary Docz URL');
+  }
+
+  if (SHARE_URL_RE.test(pathname)) {
+    throw new Error('Share links must use `docz share info`');
+  }
+
+  const fileMatch = pathname.match(/^\/s\/([^/]+)\/f\/([^/]+)\/?$/);
+  if (fileMatch) {
+    return {
+      kind: 'file-ref',
+      slug: decodePath(fileMatch[1]),
+      fileId: decodePath(fileMatch[2]),
+      path: '',
+    };
+  }
+
+  const slugMatch = pathname.match(/^\/s\/([^/]+)(\/.*)?$/);
+  if (slugMatch) {
+    return {
+      kind: 'path',
+      slug: decodePath(slugMatch[1]),
+      path: slugMatch[2] ? decodePath(slugMatch[2].slice(1)) : '',
+    };
+  }
+
+  const legacyMatch = pathname.match(/^\/spaces\/([^/]+)(\/.*)?$/);
+  if (legacyMatch) {
+    return {
+      kind: 'path',
+      spaceId: decodePath(legacyMatch[1]),
+      path: legacyMatch[2] ? decodePath(legacyMatch[2].slice(1)) : '',
+    };
+  }
+
+  throw new Error(
+    'Unrecognized ordinary Docz URL. Expected /s/{slug}[/f/{fileId}], /s/{slug}[/path], or /spaces/{id}[/path]'
+  );
+}
+
+export function mapNormalLinkInfo(diagnostic: LinkDiagnostic): NormalLinkInfo {
+  const documentPath =
+    !diagnostic.link_valid || diagnostic.path === undefined
+      ? null
+      : diagnostic.path === ''
+        ? '/'
+        : `/${diagnostic.path}`;
+  const documentStatus = !diagnostic.link_valid
+    ? 'unknown'
+    : !diagnostic.document_applicable
+      ? 'not_applicable'
+      : diagnostic.document_exists
+        ? 'exists'
+        : 'not_found';
+
+  return {
+    link_type: 'normal',
+    link_status: diagnostic.link_valid ? 'valid' : 'invalid',
+    space_permission: !diagnostic.space_exists
+      ? 'not_applicable'
+      : diagnostic.has_space_access
+        ? 'accessible'
+        : 'inaccessible',
+    document_path: documentPath,
+    document_status: documentStatus,
+    space_admin:
+      diagnostic.owner_name !== undefined ||
+      diagnostic.owner_email !== undefined
+        ? {
+            name: diagnostic.owner_name ?? null,
+            email: diagnostic.owner_email ?? null,
+          }
+        : null,
+    is_folder:
+      typeof diagnostic.is_dir === 'boolean' ? diagnostic.is_dir : null,
+  };
+}
+
+export function mapShareLinkInfo(
+  inspection: ShareLinkInspection
+): ShareLinkInfo {
+  const info = inspection.info;
+  return {
+    link_status: inspection.link_status,
+    access_status: inspection.access_status,
+    visibility: info ? (info.is_public ? 'public' : 'restricted') : null,
+    space_name: info?.space_name ?? null,
+    document_path: info
+      ? info.file_path === ''
+        ? '/'
+        : `/${info.file_path}`
+      : null,
+    document_status: info
+      ? info.document_exists
+        ? 'exists'
+        : 'not_found'
+      : 'unknown',
+    role: info?.role ?? null,
+    shared_by: info?.created_by_name ?? null,
+    expires_at: info?.expires_at ?? null,
+    is_folder: info?.is_dir ?? null,
+    has_space_access: info?.has_space_access ?? null,
+  };
+}
+
+function unknownNormalLinkInfo(): NormalLinkInfo {
+  return {
+    link_type: 'normal',
+    link_status: 'unknown',
+    space_permission: 'unknown',
+    document_path: null,
+    document_status: 'unknown',
+    space_admin: null,
+    is_folder: null,
+  };
+}
+
+function unknownShareLinkInfo(): ShareLinkInfo {
+  return {
+    link_status: 'unknown',
+    access_status: 'unknown',
+    visibility: null,
+    space_name: null,
+    document_path: null,
+    document_status: 'unknown',
+    role: null,
+    shared_by: null,
+    expires_at: null,
+    is_folder: null,
+    has_space_access: null,
+  };
+}
+
+function formatNullable(value: string | boolean | null): string {
+  return value === null ? 'unknown' : String(value);
 }
 
 /** Read all of stdin into a string */
@@ -698,6 +900,59 @@ export function registerCommands(program: Command): void {
       console.log(`Comment #${commentId} deleted.`);
     });
 
+  // --- ordinary link metadata ---
+  const link = program
+    .command('link')
+    .description('Inspect ordinary Docz links');
+
+  link
+    .command('info')
+    .description('Show ordinary link metadata — docz link info <url>')
+    .argument('<url>', 'Ordinary Docz URL')
+    .option('--json', 'Output machine-readable JSON')
+    .action(async (url: string, opts: { json?: boolean }) => {
+      const target = parseNormalLink(url);
+      const client = getClient();
+      let result: NormalLinkInfo;
+      try {
+        const diagnostic =
+          target.kind === 'file-ref'
+            ? await client.diagnoseFileRef(target.fileId, target.slug)
+            : await client.diagnosePath({
+                slug: target.slug,
+                spaceId: target.spaceId,
+                path: target.path,
+              });
+        result = mapNormalLinkInfo(diagnostic);
+      } catch (err) {
+        result = unknownNormalLinkInfo();
+        process.exitCode = 2;
+        console.error(
+          `Warning: link diagnostic failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+
+      if (opts.json) {
+        console.log(JSON.stringify(result));
+        return;
+      }
+      console.log(`Link type:        ${result.link_type}`);
+      console.log(`Link status:      ${result.link_status}`);
+      console.log(`Space permission: ${result.space_permission}`);
+      console.log(`Document path:     ${formatNullable(result.document_path)}`);
+      console.log(`Document status:   ${result.document_status}`);
+      const admin = result.space_admin;
+      console.log(
+        `Space admin:       ${
+          admin
+            ? [admin.name, admin.email].filter(Boolean).join(' <') +
+              (admin.name && admin.email ? '>' : '')
+            : 'unknown'
+        }`
+      );
+      console.log(`Folder:            ${formatNullable(result.is_folder)}`);
+    });
+
   // --- share ---
   const share = program.command('share').description('Manage share links');
 
@@ -831,14 +1086,57 @@ export function registerCommands(program: Command): void {
     .command('info')
     .description('Show share link info — docz share info <token-or-url>')
     .argument('<token>', 'Share token or full URL')
-    .action(async (tokenArg: string) => {
-      const client = getClient();
+    .option('--json', 'Output machine-readable JSON')
+    .action(async (tokenArg: string, opts: { json?: boolean }) => {
+      try {
+        const pathname = new URL(tokenArg).pathname;
+        if (/^\/(?:s|spaces)\//.test(pathname)) {
+          throw new Error('Ordinary links must use `docz link info`');
+        }
+      } catch (err) {
+        if (
+          err instanceof Error &&
+          err.message === 'Ordinary links must use `docz link info`'
+        ) {
+          throw err;
+        }
+      }
+
+      const client = getOptionalClient();
       const token = extractShareToken(tokenArg);
-      const info = await client.getSharedFileInfo(token);
-      console.log(`File:       ${info.file_path}`);
-      console.log(`Space:      ${info.space_name}`);
-      console.log(`Shared by:  ${info.created_by_name}`);
-      console.log(`Expires:    ${info.expires_at ?? 'never'}`);
+      let result: ShareLinkInfo;
+      try {
+        result = mapShareLinkInfo(await client.inspectShareLink(token));
+      } catch (err) {
+        result = unknownShareLinkInfo();
+        process.exitCode = 2;
+        console.error(
+          `Warning: share diagnostic failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+
+      if (opts.json) {
+        console.log(JSON.stringify(result));
+        return;
+      }
+      console.log(`Link status:      ${result.link_status}`);
+      console.log(`Access status:    ${result.access_status}`);
+      console.log(`Visibility:       ${formatNullable(result.visibility)}`);
+      console.log(`File:             ${formatNullable(result.document_path)}`);
+      console.log(`Space:            ${formatNullable(result.space_name)}`);
+      console.log(`Document status:  ${result.document_status}`);
+      console.log(`Role:             ${formatNullable(result.role)}`);
+      console.log(`Shared by:        ${formatNullable(result.shared_by)}`);
+      console.log(
+        `Expires:          ${
+          result.expires_at ??
+          (result.access_status === 'accessible' ? 'never' : 'unknown')
+        }`
+      );
+      console.log(`Folder:           ${formatNullable(result.is_folder)}`);
+      console.log(
+        `Space access:     ${formatNullable(result.has_space_access)}`
+      );
     });
 
   share

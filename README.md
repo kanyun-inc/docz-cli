@@ -87,6 +87,7 @@ export DOCSYNC_API_TOKEN=<your-token>
 | `log <space>[:<path>]` | Show change history |
 | `rollback <space>:<path> <commit>` | Rollback file to a specific commit |
 | `shortlink <space>:<path>` | Get short URL for file |
+| `link info <url> [--json]` | Inspect ordinary link, Space permission, path, and document status |
 | `trash <space>` | Show deleted files |
 | `restore <space>:<path> <commit>` | Restore file from trash |
 | `diff <space>[:<path>] <commit> [<from>]` | Show changes (file or space level) |
@@ -99,7 +100,7 @@ export DOCSYNC_API_TOKEN=<your-token>
 | `share list <space>` | List share links |
 | `share update <space> <link-id>` | Update share link |
 | `share cat <token-or-url>` | Read shared file |
-| `share info <token-or-url>` | Show share link info |
+| `share info <token-or-url> [--json]` | Inspect share lifecycle, access, and target status |
 | `share rm <space> <link-id>` | Delete share link |
 | `mcp` | Start MCP stdio server |
 
@@ -131,6 +132,27 @@ docz-cli cat https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c
 docz-cli ls https://docz.zhenguanyu.com/s/yanfa
 docz-cli log https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c
 ```
+
+### Link Metadata
+
+Ordinary and share links use separate commands and output contracts. Link
+lifecycle and target document status are reported independently.
+
+```bash
+# Ordinary stable/path/root/legacy links (authentication required)
+docz-cli link info https://docz.zhenguanyu.com/s/yanfa/f/NNjrcj8c
+docz-cli link info https://docz.zhenguanyu.com/s/yanfa/docs/guide.md --json
+
+# Share token or URL (public shares can be inspected without a token)
+docz-cli share info https://docz.zhenguanyu.com/share/xYz123AbC
+docz-cli share info xYz123AbC --json
+```
+
+Ordinary JSON includes `link_status`, `space_permission`, `document_path`,
+`document_status`, `space_admin`, and `is_folder`. Share JSON additionally uses
+share-specific fields such as `access_status`, `visibility`, `role`,
+`shared_by`, and `expires_at`. Technical failures produce `unknown` values and
+exit code 2 instead of incorrectly reporting a missing link or document.
 
 ### Write
 
@@ -189,8 +211,9 @@ docz-cli share cat xYz123AbC
 docz-cli share cat https://docz.zhenguanyu.com/share/xYz123AbC
 docz-cli share cat xYz123AbC --raw | grep "部署"  # Raw output for pipes
 
-# View share link info
+# View share link info (human or JSON)
 docz-cli share info xYz123AbC
+docz-cli share info xYz123AbC --json
 
 # Update and delete (requires space context)
 docz-cli share update G160-研发 <link-id> --expires 30d

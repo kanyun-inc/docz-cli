@@ -70,9 +70,74 @@ export interface ShareLink {
 export interface ShareFileInfo {
   file_path: string;
   file_name: string;
+  space_id: string;
   space_name: string;
+  space_slug?: string;
   created_by_name: string;
   expires_at: string | null;
+  has_space_access: boolean;
+  role: string;
+  is_public: boolean;
+  is_dir: boolean;
+  document_exists: boolean;
+  owner_name?: string;
+  owner_email?: string;
+}
+
+export interface LinkDiagnostic {
+  link_valid: boolean;
+  space_exists: boolean;
+  has_space_access: boolean;
+  document_applicable: boolean;
+  document_exists: boolean;
+  id?: string;
+  space_id?: string;
+  slug?: string;
+  path?: string;
+  is_dir?: boolean;
+  is_alias?: boolean;
+  owner_name?: string;
+  owner_email?: string;
+}
+
+export interface ShareLinkInspection {
+  link_status: 'valid' | 'invalid' | 'expired';
+  access_status: 'accessible' | 'login_required' | 'forbidden' | 'unknown';
+  info?: ShareFileInfo;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isShareFileInfo(value: unknown): value is ShareFileInfo {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.file_path === 'string' &&
+    typeof value.file_name === 'string' &&
+    typeof value.space_id === 'string' &&
+    typeof value.space_name === 'string' &&
+    typeof value.created_by_name === 'string' &&
+    (value.expires_at === null || typeof value.expires_at === 'string') &&
+    typeof value.has_space_access === 'boolean' &&
+    typeof value.role === 'string' &&
+    typeof value.is_public === 'boolean' &&
+    typeof value.is_dir === 'boolean' &&
+    typeof value.document_exists === 'boolean'
+  );
+}
+
+function isLinkDiagnostic(value: unknown): value is LinkDiagnostic {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.link_valid === 'boolean' &&
+    typeof value.space_exists === 'boolean' &&
+    typeof value.has_space_access === 'boolean' &&
+    typeof value.document_applicable === 'boolean' &&
+    typeof value.document_exists === 'boolean' &&
+    (value.path === undefined || typeof value.path === 'string') &&
+    (value.is_dir === undefined || typeof value.is_dir === 'boolean')
+  );
 }
 
 export interface DiffResponse {
@@ -540,6 +605,40 @@ export class DocSyncClient {
     return this.request(`/api/share/${token}/info`);
   }
 
+  async inspectShareLink(token: string): Promise<ShareLinkInspection> {
+    const headers: Record<string, string> = {};
+    if (this.token) headers.Authorization = `Bearer ${this.token}`;
+    const res = await fetch(
+      `${this.baseUrl}/api/share/${encodeURIComponent(token)}/info`,
+      { headers }
+    );
+    if (res.status === 401) {
+      return { link_status: 'valid', access_status: 'login_required' };
+    }
+    if (res.status === 403) {
+      return { link_status: 'valid', access_status: 'forbidden' };
+    }
+    if (res.status === 404) {
+      return { link_status: 'invalid', access_status: 'unknown' };
+    }
+    if (res.status === 410) {
+      return { link_status: 'expired', access_status: 'unknown' };
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`${res.status} ${res.statusText}: ${body}`.trim());
+    }
+    const info: unknown = await res.json();
+    if (!isShareFileInfo(info)) {
+      throw new Error('Invalid share diagnostic response');
+    }
+    return {
+      link_status: 'valid',
+      access_status: 'accessible',
+      info,
+    };
+  }
+
   // --- Diff ---
   async diffFile(
     spaceId: string,
@@ -588,5 +687,48 @@ export class DocSyncClient {
 
   async resolveFileRef(fileId: string): Promise<FileRef> {
     return this.request(`/api/file-refs/${encodeURIComponent(fileId)}`);
+  }
+
+  async diagnoseFileRef(
+    fileId: string,
+    slug?: string
+  ): Promise<LinkDiagnostic> {
+    const params = new URLSearchParams();
+    if (slug) params.set('slug', slug);
+    const suffix = params.size > 0 ? `?${params}` : '';
+    return this.requestDiagnostic(
+      `/api/file-refs/${encodeURIComponent(fileId)}/diagnostic${suffix}`
+    );
+  }
+
+  async diagnosePath(input: {
+    slug?: string;
+    spaceId?: string;
+    path?: string;
+  }): Promise<LinkDiagnostic> {
+    const params = new URLSearchParams();
+    if (input.slug) params.set('slug', input.slug);
+    if (input.spaceId) params.set('space_id', input.spaceId);
+    if (input.path) params.set('path', input.path);
+    return this.requestDiagnostic(`/api/link-diagnostics/path?${params}`);
+  }
+
+  private async requestDiagnostic(path: string): Promise<LinkDiagnostic> {
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      headers: { Authorization: `Bearer ${this.token}` },
+    });
+    if (res.ok || res.status === 404) {
+      const contentType = res.headers.get('content-type') ?? '';
+      if (!contentType.includes('application/json')) {
+        throw new Error(`Invalid diagnostic response (${res.status})`);
+      }
+      const diagnostic: unknown = await res.json();
+      if (!isLinkDiagnostic(diagnostic)) {
+        throw new Error('Invalid link diagnostic response');
+      }
+      return diagnostic;
+    }
+    const body = await res.text().catch(() => '');
+    throw new Error(`${res.status} ${res.statusText}: ${body}`.trim());
   }
 }

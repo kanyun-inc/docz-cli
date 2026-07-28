@@ -7,8 +7,11 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { DocSyncClient } from './client.js';
 import {
   IMAGE_MAX_SIZE,
+  mapNormalLinkInfo,
+  mapShareLinkInfo,
   markdownImageRef,
   parseExpires,
+  parseNormalLink,
   parseTarget,
   readImageFile,
   resolveSpaceArg,
@@ -127,6 +130,154 @@ describe('parseTarget', () => {
     expect(parseTarget(['研发', 'docs/guide.md'])).toEqual({
       space: '研发',
       path: 'docs/guide.md',
+    });
+  });
+});
+
+describe('parseNormalLink', () => {
+  it('parses stable, slug-path, root, and legacy URLs', () => {
+    expect(
+      parseNormalLink('https://docz.example.com/s/yanfa/f/NNjrcj8c')
+    ).toEqual({
+      kind: 'file-ref',
+      slug: 'yanfa',
+      fileId: 'NNjrcj8c',
+      path: '',
+    });
+    expect(
+      parseNormalLink(
+        'https://docz.example.com/s/yanfa/%E6%96%87%E6%A1%A3/guide.md'
+      )
+    ).toEqual({
+      kind: 'path',
+      slug: 'yanfa',
+      path: '文档/guide.md',
+    });
+    expect(parseNormalLink('https://docz.example.com/s/yanfa')).toEqual({
+      kind: 'path',
+      slug: 'yanfa',
+      path: '',
+    });
+    expect(
+      parseNormalLink('https://docz.example.com/spaces/space-1/docs')
+    ).toEqual({
+      kind: 'path',
+      spaceId: 'space-1',
+      path: 'docs',
+    });
+  });
+
+  it('rejects share and unknown URLs', () => {
+    expect(() =>
+      parseNormalLink('https://docz.example.com/share/token')
+    ).toThrow('docz share info');
+    expect(() => parseNormalLink('https://docz.example.com/settings')).toThrow(
+      'Unrecognized ordinary Docz URL'
+    );
+  });
+});
+
+describe('link metadata mapping', () => {
+  it('keeps link, permission, and document status independent', () => {
+    expect(
+      mapNormalLinkInfo({
+        link_valid: true,
+        space_exists: true,
+        has_space_access: false,
+        document_applicable: true,
+        document_exists: false,
+        path: 'deleted.md',
+        is_dir: false,
+        owner_name: '管理员',
+        owner_email: 'owner@example.com',
+      })
+    ).toEqual({
+      link_type: 'normal',
+      link_status: 'valid',
+      space_permission: 'inaccessible',
+      document_path: '/deleted.md',
+      document_status: 'not_found',
+      space_admin: { name: '管理员', email: 'owner@example.com' },
+      is_folder: false,
+    });
+  });
+
+  it('marks a space root as not applicable document and folder', () => {
+    expect(
+      mapNormalLinkInfo({
+        link_valid: true,
+        space_exists: true,
+        has_space_access: true,
+        document_applicable: false,
+        document_exists: true,
+        path: '',
+        is_dir: true,
+      })
+    ).toMatchObject({
+      document_path: '/',
+      document_status: 'not_applicable',
+      is_folder: true,
+    });
+  });
+
+  it('does not classify an invalid link as a missing document', () => {
+    expect(
+      mapNormalLinkInfo({
+        link_valid: false,
+        space_exists: false,
+        has_space_access: false,
+        document_applicable: true,
+        document_exists: false,
+      })
+    ).toMatchObject({
+      link_status: 'invalid',
+      space_permission: 'not_applicable',
+      document_path: null,
+      document_status: 'unknown',
+    });
+  });
+
+  it('uses a share-specific output contract', () => {
+    expect(
+      mapShareLinkInfo({
+        link_status: 'valid',
+        access_status: 'accessible',
+        info: {
+          file_path: 'docs/guide.md',
+          file_name: 'guide.md',
+          space_id: SID,
+          space_name: '研发',
+          created_by_name: '分享人',
+          expires_at: null,
+          has_space_access: false,
+          role: 'viewer',
+          is_public: false,
+          is_dir: false,
+          document_exists: true,
+        },
+      })
+    ).toEqual({
+      link_status: 'valid',
+      access_status: 'accessible',
+      visibility: 'restricted',
+      space_name: '研发',
+      document_path: '/docs/guide.md',
+      document_status: 'exists',
+      role: 'viewer',
+      shared_by: '分享人',
+      expires_at: null,
+      is_folder: false,
+      has_space_access: false,
+    });
+    expect(
+      mapShareLinkInfo({
+        link_status: 'expired',
+        access_status: 'unknown',
+      })
+    ).toMatchObject({
+      link_status: 'expired',
+      document_status: 'unknown',
+      document_path: null,
     });
   });
 });

@@ -9,7 +9,7 @@ tags:
   - file-sync
   - knowledge
 user-invocable: true
-argument-hint: "spaces | whoami | ls/cat/write/upload/mkdir/mv/rm/log/rollback/trash/restore/shortlink/diff | collab cat/write/publish/bridge | comment <subcmd> | share <subcmd>"
+argument-hint: "spaces | whoami | ls/cat/write/upload/mkdir/mv/rm/log/rollback/trash/restore/shortlink/diff | link info | collab cat/write/publish/bridge | comment <subcmd> | share <subcmd>"
 allowed-tools: Bash(*)
 ---
 
@@ -52,6 +52,13 @@ G160-研发:docs/guide.md      → specific file
 
 Commands that take a `<space>` or `<space>:<path>` target accept DocSync URLs directly. `share cat` and `share info` accept share URLs separately. `login`, `whoami`, and `spaces` do not take document URLs.
 
+Use `link info <url> [--json]` to inspect an ordinary DocSync URL, and use
+`share info <token-or-url> [--json]` for a share link. Do not interchange these
+entry points: ordinary results contain Space permission and owner metadata,
+while share results contain share access, visibility, role, creator, and expiry.
+In both results, `link_status` is independent from `document_status`; an
+`unknown` value means the server or transport could not confirm the fact.
+
 Supported DocSync URL formats:
 
 - **Short URL (fileId)**: `/s/{slug}/f/{fileId}` — resolves fileId to path via API
@@ -89,6 +96,7 @@ npx docz-cli@latest rm <space>:<path>                     # delete (30-day trash
 npx docz-cli@latest log <space>[:<path>]                  # change history
 npx docz-cli@latest diff <space>[:<path>] <commit> [<from>]  # view changes
 npx docz-cli@latest shortlink <space>:<path>              # get short URL
+npx docz-cli@latest link info <url> [--json]              # inspect ordinary link metadata
 ```
 
 ### Safe Write (with conflict detection)
@@ -198,7 +206,7 @@ npx docz-cli@latest share create <url> [--expires 7d]      # create share link f
 npx docz-cli@latest share list <space> [--file <path>]
 npx docz-cli@latest share update <space> <link-id> [--expires 30d]
 npx docz-cli@latest share cat <token-or-url> [--raw]
-npx docz-cli@latest share info <token-or-url>
+npx docz-cli@latest share info <token-or-url> [--json]     # inspect share-specific metadata
 npx docz-cli@latest share rm <space> <link-id>
 ```
 
