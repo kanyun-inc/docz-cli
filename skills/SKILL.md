@@ -232,19 +232,24 @@ freshness is not guaranteed.
 
 1. Run `local root --json` only for the search scenario above. This reads
    client configuration only and MUST NOT enumerate synchronized files.
-2. If the root exists, show its path and ask the user whether this task may
-   search it. State that the local copy may be stale.
-3. Before explicit confirmation, do not run `find`, `rg`, directory listings,
+2. Treat a missing client configuration or `exists: false` as normal
+   unavailability of this optional optimization. Do not guess, derive, or
+   create a path, and do not block the task; continue with remote Docz
+   commands. If the configuration is invalid, report it briefly and continue
+   remotely.
+3. Only when the returned root exists, show its path and ask the user whether
+   this task may search it. State that the local copy may be stale.
+4. Before explicit confirmation, do not run `find`, `rg`, directory listings,
    or read any file beneath the root.
-4. After confirmation, limit access to read-only search for the current task.
+5. After confirmation, limit access to read-only search for the current task.
    Do not treat confirmation as a persistent permission.
-5. Never create, edit, delete, rename, or move a local synchronized file.
-6. After local search identifies a document, re-read the current remote
+6. Never create, edit, delete, rename, or move a local synchronized file.
+7. After local search identifies a document, re-read the current remote
    content before editing. Use `collab cat/write` for an existing supported
    text document. Use plain `write` to create a new text file because
    collaborative editing cannot create files. Use the other Docz CLI commands
    for upload, directory, move, and delete operations.
-7. If collaboration is unavailable, fall back to remote `cat/write`, never to
+8. If collaboration is unavailable, fall back to remote `cat/write`, never to
    a local filesystem write.
 
 ### Neovim / Terminal Editor Bridge
