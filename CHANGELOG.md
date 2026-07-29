@@ -1,5 +1,21 @@
 # docz-cli
 
+## 0.11.0
+
+### Minor Changes
+
+- b8af376: Add separate `link info` and `share info` commands for ordinary and shared
+  DocSync links, with human-readable and JSON output for link status, document
+  status, folder type, permissions, ownership, and share access metadata.
+- b8af376: Add `docz local root` to discover the configured DocSync synchronization
+  directory without enumerating files, including existence and freshness
+  metadata for consent-based, read-only local search with remote-only writes.
+
+### Patch Changes
+
+- b8af376: Clarify that `mv` destinations are complete Space-root-relative paths and
+  improve failed and unknown move outcomes with actionable destination context.
+
 ## 0.10.1
 
 ### Patch Changes
