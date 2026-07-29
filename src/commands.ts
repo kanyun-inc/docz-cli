@@ -20,6 +20,7 @@ import {
 } from './collab/text.js';
 import { type CollabOpenOptions, CollabUnknownError } from './collab/types.js';
 import { getBaseUrl, getConfigPath, getToken, saveConfig } from './config.js';
+import { registerLocalCommands } from './local.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -543,6 +544,8 @@ export function markdownImageRef(filename: string, url: string): string {
 // ---------------------------------------------------------------------------
 
 export function registerCommands(program: Command): void {
+  registerLocalCommands(program);
+
   // --- login ---
   program
     .command('login')

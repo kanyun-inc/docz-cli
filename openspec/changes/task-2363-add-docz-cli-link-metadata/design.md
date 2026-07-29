@@ -231,6 +231,55 @@ sequenceDiagram
 - 不记录完整分享 token；错误消息仅使用服务端状态
 - 所有新响应字段均为向后兼容追加
 
+## 本地同步根目录发现
+
+### 范围
+
+`docz local root [--json]` 只读取 DocSync 客户端数据目录下
+`config.json` 的 `sync_dir` 字段，并检查该路径是否为现存目录。命令：
+
+- 不连接 daemon IPC
+- 不要求 DocSync 客户端正在运行
+- 不访问服务端或要求 API Token
+- 不枚举或读取同步目录中的文件
+- 不判断本地内容是否最新
+
+默认客户端数据目录为 `~/.docsync`；自定义安装通过
+`--client-data-dir` 或 `DOCSYNC_CLIENT_DATA_DIR` 指定。
+
+JSON 契约：
+
+```json
+{
+  "sync_root": "/Users/user/Docz",
+  "exists": true,
+  "freshness": "unknown",
+  "source": "client_config"
+}
+```
+
+配置有效且目录存在时退出 0；配置不存在、损坏或 `sync_dir` 非绝对路径时
+退出 1；配置有效但目录不存在时仍输出路径并退出 2。
+
+### Agent 权限和写入边界
+
+获取根目录不等于授权读取其中内容。Agent 只有在用户针对当前任务明确确认后，
+才可对同步目录执行只读检索；确认前不得列目录、搜索或读取文件。授权不跨任务
+保留。
+
+本地同步目录永远不是 Agent 写入目标。检索定位到已有文本文件后，Agent 必须
+重新通过 `collab cat` 获取实时内容并使用带 `collab_hash` 的 `collab write`
+写回。新建文本文件使用普通 `write`；大文件、目录、移动和删除分别使用
+`upload`、`mkdir`、`mv`、`rm`。协同能力不可用时只能降级为远端
+`cat/write`。
+
+### 路径与隐私
+
+- 只接受非空绝对 `sync_dir`，兼容 POSIX、Windows drive 和 UNC 路径
+- 命令不输出配置文件中的 Token 或其他字段
+- `exists` 仅检查根路径自身，不扫描子目录
+- Skill 要求后续只读检索不得逃逸同步根目录
+
 ## 测试设计
 
 ### 服务端

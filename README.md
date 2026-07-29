@@ -88,6 +88,7 @@ export DOCSYNC_API_TOKEN=<your-token>
 | `rollback <space>:<path> <commit>` | Rollback file to a specific commit |
 | `shortlink <space>:<path>` | Get short URL for file |
 | `link info <url> [--json]` | Inspect ordinary link, Space permission, path, and document status |
+| `local root [--json]` | Print the configured local synchronization root |
 | `trash <space>` | Show deleted files |
 | `restore <space>:<path> <commit>` | Restore file from trash |
 | `diff <space>[:<path>] <commit> [<from>]` | Show changes (file or space level) |
@@ -153,6 +154,26 @@ Ordinary JSON includes `link_status`, `space_permission`, `document_path`,
 share-specific fields such as `access_status`, `visibility`, `role`,
 `shared_by`, and `expires_at`. Technical failures produce `unknown` values and
 exit code 2 instead of incorrectly reporting a missing link or document.
+
+### Local Sync Root
+
+```bash
+docz local root
+docz local root --json
+DOCSYNC_CLIENT_DATA_DIR=/custom/client-data docz local root --json
+```
+
+This command only reads `sync_dir` from the local DocSync client configuration.
+It does not connect to the daemon, enumerate or read synchronized files, or
+claim that the local copy is current. JSON therefore reports
+`"freshness":"unknown"`. If the configured root is missing, the command still
+prints the path and exits with code 2.
+
+AI agents must ask for task-scoped user confirmation before searching or
+reading files below this root. The synchronized directory is always read-only
+to agents: existing documents are edited through `collab cat/write`, new text
+documents through `write`, and other mutations through the corresponding Docz
+CLI commands.
 
 ### Write
 

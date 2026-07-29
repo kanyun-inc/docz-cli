@@ -1,6 +1,6 @@
 ---
 name: docz
-description: Read, write, and collaboratively edit company DocSync documents. Triggers on "docs", "documents", "upload file", "read space", "docz", "DocSync", "save file", "rollback", "restore", "trash", "version history", "comment", "share link", "diff", "collab", "collaborative editing", "Neovim"
+description: Read, write, collaboratively edit, and safely search local synchronized copies of company DocSync documents. Triggers on "docs", "documents", "upload file", "read space", "docz", "DocSync", "save file", "rollback", "restore", "trash", "version history", "comment", "share link", "diff", "collab", "collaborative editing", "local sync", "sync root", "bulk document search", "Neovim"
 version: 0.15.0
 author: kris
 tags:
@@ -9,7 +9,7 @@ tags:
   - file-sync
   - knowledge
 user-invocable: true
-argument-hint: "spaces | whoami | ls/cat/write/upload/mkdir/mv/rm/log/rollback/trash/restore/shortlink/diff | link info | collab cat/write/publish/bridge | comment <subcmd> | share <subcmd>"
+argument-hint: "spaces | whoami | ls/cat/write/upload/mkdir/mv/rm/log/rollback/trash/restore/shortlink/diff | link info | local root | collab cat/write/publish/bridge | comment <subcmd> | share <subcmd>"
 allowed-tools: Bash(*)
 ---
 
@@ -97,7 +97,30 @@ npx docz-cli@latest log <space>[:<path>]                  # change history
 npx docz-cli@latest diff <space>[:<path>] <commit> [<from>]  # view changes
 npx docz-cli@latest shortlink <space>:<path>              # get short URL
 npx docz-cli@latest link info <url> [--json]              # inspect ordinary link metadata
+npx docz-cli@latest local root [--json]                   # print configured local sync root only
 ```
+
+### Local Sync Directory Policy
+
+Use the local synchronization root only to accelerate bulk, multi-document
+searches. It is not a write target and its freshness is not guaranteed.
+
+1. Run `local root --json`; this only reads client configuration and MUST NOT
+   enumerate synchronized files.
+2. If the root exists, show its path and ask the user whether this task may
+   search it. State that the local copy may be stale.
+3. Before explicit confirmation, do not run `find`, `rg`, directory listings,
+   or read any file beneath the root.
+4. After confirmation, limit access to read-only search for the current task.
+   Do not treat confirmation as a persistent permission.
+5. Never create, edit, delete, rename, or move a local synchronized file.
+6. After local search identifies a document, re-read the current remote
+   content before editing. Use `collab cat/write` for an existing supported
+   text document. Use plain `write` to create a new text file because
+   collaborative editing cannot create files. Use the other Docz CLI commands
+   for upload, directory, move, and delete operations.
+7. If collaboration is unavailable, fall back to remote `cat/write`, never to
+   a local filesystem write.
 
 ### Safe Write (with conflict detection)
 
@@ -164,6 +187,7 @@ For collaborative edits that need to write back, always use normal `collab cat` 
 **Write strategy**:
 
 - Prefer `collab cat/write` for editing existing DocSync text documents, especially `.md`, `.txt`, `.csv`, `.html`, and docs the user may have open in Web.
+- Use plain `write` to create a new text file; collaborative editing only supports existing documents.
 - Always use `collab cat/write` when the user mentions collaboration, browser editing, CLI + browser testing, conflicts, shared editing, or reducing conflict files.
 - Use plain `cat/write` only for simple one-shot updates where no active editor is expected.
 - Do not mix `cat` + `collab write`; use `collab cat` to get `collab_hash`.

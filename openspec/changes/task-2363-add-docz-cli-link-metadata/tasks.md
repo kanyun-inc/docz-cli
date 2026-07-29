@@ -38,9 +38,18 @@
 - [x] 6.4 使用本地构建 CLI 在 test-uts 真机验证普通文件、目录、无效链接、公开分享、受限/过期分享与目标删除
 - [x] 6.5 测试后重新部署 test-uts SSO 配置并记录验证证据
 
+## 7. 本地同步根目录与 Agent 安全策略
+
+- [x] 7.1 新增 `local root [--json]`，仅读取客户端配置的 `sync_dir`，不连接 IPC、不鉴权、不遍历同步内容
+- [x] 7.2 支持 `--client-data-dir`、`DOCSYNC_CLIENT_DATA_DIR` 和默认 `~/.docsync` 优先级
+- [x] 7.3 覆盖配置缺失/损坏、相对路径、Unicode、Windows 路径及同步根目录缺失测试
+- [x] 7.4 更新 Skill：本地检索必须先获得当前任务确认，且同步目录始终禁止写入
+- [x] 7.5 更新写入路由：已有文本优先协同编辑，新建文本使用普通 `write`，其他变更使用对应远端 CLI
+
 ## 验证记录
 
 - 服务端：`go test -p 1 ./... -timeout=5m` 全量通过
-- CLI：typecheck、lint、114 条 Vitest 用例及 build 全部通过
+- CLI：typecheck、lint、143 条 Vitest 用例及 build 全部通过
 - test-uts：14 个真机断言通过，覆盖 stable/path/root/legacy、文件/目录、无 Space 权限、无效链接、公开/受限/过期/无效分享以及目标删除
 - 环境恢复：`/healthz` 返回 `ok`，`/api/auth/mode` 已恢复 `login_mode=sso`
+- 本地根目录：聚焦单元测试、POSIX/Windows/UNC 路径用例、全量 CLI 回归及 Skill 项目结构校验通过
