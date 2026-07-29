@@ -4,8 +4,9 @@ import { join } from 'node:path';
 import { HttpResponse, http } from 'msw';
 import { setupServer } from 'msw/node';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { DocSyncClient } from './client.js';
+import { DocSyncClient, MoveError } from './client.js';
 import {
+  describeMoveFailure,
   IMAGE_MAX_SIZE,
   mapNormalLinkInfo,
   mapShareLinkInfo,
@@ -16,6 +17,7 @@ import {
   readImageFile,
   resolveSpaceArg,
   resolveTarget,
+  validateDestinationPath,
 } from './commands.js';
 
 // ---------------------------------------------------------------------------
@@ -77,6 +79,73 @@ const server = setupServer(
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
+
+// ---------------------------------------------------------------------------
+// mv destination semantics
+// ---------------------------------------------------------------------------
+
+describe('validateDestinationPath', () => {
+  it.each(['new.md', 'archive/new.md', '归档/新文档.md', 'a.b/文档 1.md'])(
+    'accepts a Space-root-relative path: %s',
+    (path) => {
+      expect(validateDestinationPath(path)).toBeNull();
+    }
+  );
+
+  it.each([
+    '',
+    '/absolute.md',
+    'archive//new.md',
+    './new.md',
+    '../new.md',
+    'archive\\new.md',
+    'CON.md',
+    'archive/trailing.',
+    `${'界'.repeat(86)}.md`,
+  ])('rejects a non-portable destination: %s', (path) => {
+    expect(validateDestinationPath(path)).not.toBeNull();
+  });
+});
+
+describe('describeMoveFailure', () => {
+  it('shows the resolved paths and mkdir hint for a missing parent', () => {
+    const result = describeMoveFailure(
+      new MoveError(404, {
+        error: 'destination_parent_not_found',
+        message: 'Destination parent directory does not exist',
+        outcome: 'failed',
+        old_path: 'docs/a.md',
+        new_path: 'archive/b.md',
+        parent_path: 'archive',
+      }),
+      SID,
+      'docs/a.md',
+      'archive/b.md'
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.lines).toContain('Resolved move: docs/a.md → archive/b.md');
+    expect(result.lines.join('\n')).toContain(`docz mkdir ${SID}:archive`);
+  });
+
+  it('uses exit code 2 and warns before retrying an unknown outcome', () => {
+    const result = describeMoveFailure(
+      new MoveError(503, {
+        error: 'move_status_unknown',
+        message: 'Move result is unknown',
+        outcome: 'unknown',
+      }),
+      SID,
+      'a.md',
+      'b.md'
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.lines.join('\n')).toContain(
+      'verify both source and destination'
+    );
+  });
+});
 
 // ---------------------------------------------------------------------------
 // parseExpires (existing tests)

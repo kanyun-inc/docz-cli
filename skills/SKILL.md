@@ -91,7 +91,7 @@ npx docz-cli@latest cat --ref <space>:<path>              # read file + print re
 npx docz-cli@latest upload <local-file> <space>[:<dir>]   # upload file
 npx docz-cli@latest image upload <local-image>            # upload image to OSS, get public URL
 npx docz-cli@latest mkdir <space>:<path>                  # create folder
-npx docz-cli@latest mv <space>:<from> <to>                # rename/move
+npx docz-cli@latest mv <source> <destination-path>        # destination is Space-root-relative
 npx docz-cli@latest rm <space>:<path>                     # delete (30-day trash)
 npx docz-cli@latest log <space>[:<path>]                  # change history
 npx docz-cli@latest diff <space>[:<path>] <commit> [<from>]  # view changes

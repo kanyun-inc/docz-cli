@@ -1,7 +1,7 @@
 import { HttpResponse, http } from 'msw';
 import { setupServer } from 'msw/node';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { ConflictError, DocSyncClient } from './client.js';
+import { ConflictError, DocSyncClient, MoveError } from './client.js';
 
 const BASE = 'https://docz.test.com';
 const TOKEN = 'test-token';
@@ -218,6 +218,38 @@ const server = setupServer(
 
   http.post(`${BASE}/api/spaces/:sid/files/rename`, async ({ request }) => {
     const body = (await request.json()) as Record<string, string>;
+    if (body.new_path === 'missing/new.md') {
+      return HttpResponse.json(
+        {
+          error: 'destination_parent_not_found',
+          message: 'Destination parent directory does not exist',
+          outcome: 'failed',
+          old_path: body.old_path,
+          new_path: body.new_path,
+          parent_path: 'missing',
+        },
+        { status: 404 }
+      );
+    }
+    if (body.new_path === 'unknown/new.md') {
+      return HttpResponse.json(
+        {
+          error: 'move_status_unknown',
+          message: 'Move result is unknown; verify both paths before retrying',
+          outcome: 'unknown',
+          old_path: body.old_path,
+          new_path: body.new_path,
+          parent_path: 'unknown',
+        },
+        { status: 503 }
+      );
+    }
+    if (body.new_path === 'legacy/new.md') {
+      return HttpResponse.text(
+        'rename failed: seafile_move_file: searpc error: move file failed',
+        { status: 500 }
+      );
+    }
     return HttpResponse.json(body);
   }),
 
@@ -574,8 +606,63 @@ describe('DocSyncClient', () => {
     await expect(c.rm(SID, 'old.md')).resolves.not.toThrow();
   });
 
-  it('mv() succeeds', async () => {
-    await expect(c.mv(SID, 'a.md', 'b.md')).resolves.not.toThrow();
+  it('mv() accepts a nested Unicode destination path', async () => {
+    await expect(
+      c.mv(SID, 'docs/旧文档.md', '归档/新文档.md')
+    ).resolves.not.toThrow();
+  });
+
+  it('mv() preserves a structured confirmed failure', async () => {
+    await expect(c.mv(SID, 'a.md', 'missing/new.md')).rejects.toMatchObject({
+      name: 'MoveError',
+      status: 404,
+      detail: {
+        error: 'destination_parent_not_found',
+        outcome: 'failed',
+        old_path: 'a.md',
+        new_path: 'missing/new.md',
+        parent_path: 'missing',
+      },
+    });
+  });
+
+  it('mv() preserves a structured unknown outcome', async () => {
+    await expect(c.mv(SID, 'a.md', 'unknown/new.md')).rejects.toMatchObject({
+      name: 'MoveError',
+      status: 503,
+      detail: {
+        error: 'move_status_unknown',
+        outcome: 'unknown',
+      },
+    });
+  });
+
+  it('mv() treats a legacy 5xx response as an unknown outcome', async () => {
+    await expect(c.mv(SID, 'a.md', 'legacy/new.md')).rejects.toMatchObject({
+      name: 'MoveError',
+      status: 500,
+      detail: {
+        error: 'move_status_unknown',
+        outcome: 'unknown',
+      },
+    });
+  });
+
+  it('mv() treats a network failure as an unknown outcome', async () => {
+    server.use(
+      http.post(`${BASE}/api/spaces/:sid/files/rename`, () =>
+        HttpResponse.error()
+      )
+    );
+
+    try {
+      await c.mv(SID, 'a.md', 'b.md');
+      throw new Error('expected mv to fail');
+    } catch (err) {
+      expect(err).toBeInstanceOf(MoveError);
+      expect((err as MoveError).status).toBe(0);
+      expect((err as MoveError).detail.outcome).toBe('unknown');
+    }
   });
 
   it('rollback() succeeds', async () => {

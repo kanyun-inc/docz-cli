@@ -231,6 +231,35 @@ export class ConflictError extends Error {
   }
 }
 
+export interface MoveErrorDetail {
+  error: string;
+  message: string;
+  outcome: 'failed' | 'unknown';
+  old_path?: string;
+  new_path?: string;
+  parent_path?: string;
+}
+
+export class MoveError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly detail: MoveErrorDetail
+  ) {
+    super(detail.message);
+    this.name = 'MoveError';
+  }
+}
+
+function isMoveErrorDetail(value: unknown): value is MoveErrorDetail {
+  if (!value || typeof value !== 'object') return false;
+  const detail = value as Record<string, unknown>;
+  return (
+    typeof detail.error === 'string' &&
+    typeof detail.message === 'string' &&
+    (detail.outcome === 'failed' || detail.outcome === 'unknown')
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Client
 // ---------------------------------------------------------------------------
@@ -447,10 +476,48 @@ export class DocSyncClient {
   }
 
   async mv(spaceId: string, from: string, to: string): Promise<void> {
-    await this.request(`/api/spaces/${spaceId}/files/rename`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ old_path: from, new_path: to }),
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}/api/spaces/${spaceId}/files/rename`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ old_path: from, new_path: to }),
+      });
+    } catch {
+      throw new MoveError(0, {
+        error: 'move_status_unknown',
+        message: 'Move request ended without a response',
+        outcome: 'unknown',
+        old_path: from,
+        new_path: to,
+      });
+    }
+
+    if (res.ok) return;
+
+    const text = await res.text().catch(() => '');
+    try {
+      const detail = JSON.parse(text) as unknown;
+      if (isMoveErrorDetail(detail)) {
+        throw new MoveError(res.status, detail);
+      }
+    } catch (err) {
+      if (err instanceof MoveError) throw err;
+    }
+
+    // Older servers returned plain text. A 5xx response cannot prove whether
+    // the mutating Seafile call took effect, so report it as unknown.
+    throw new MoveError(res.status, {
+      error: res.status >= 500 ? 'move_status_unknown' : 'move_failed',
+      message:
+        text.trim() ||
+        `${res.status} ${res.statusText || 'Move request failed'}`.trim(),
+      outcome: res.status >= 500 ? 'unknown' : 'failed',
+      old_path: from,
+      new_path: to,
     });
   }
 

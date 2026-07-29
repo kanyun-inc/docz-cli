@@ -83,7 +83,7 @@ export DOCSYNC_API_TOKEN=<your-token>
 | `write <space>:<path> <content>` | Write content to file (`-` for stdin) |
 | `mkdir <space>:<path>` | Create folder |
 | `rm <space>:<path>` | Delete file/folder (30-day trash) |
-| `mv <space>:<from> <to>` | Rename or move |
+| `mv <source> <destination-path>` | Rename or move within a Space |
 | `log <space>[:<path>]` | Show change history |
 | `rollback <space>:<path> <commit>` | Rollback file to a specific commit |
 | `shortlink <space>:<path>` | Get short URL for file |
@@ -177,7 +177,9 @@ docz-cli image upload ./screenshot.png
 ### Manage
 
 ```bash
-docz-cli mv G160-研发:old.md new.md              # Rename
+docz-cli mv G160-研发:old.md new.md                   # Rename in the Space root
+docz-cli mv G160-研发:docs/old.md archive/new.md      # Move and rename
+docz-cli mv https://docz.example.com/s/abc docs/new.md # URL source
 docz-cli rm G160-研发:deprecated.md               # Delete (recoverable for 30 days)
 docz-cli log G160-研发                             # Space history
 docz-cli log G160-研发:docs/guide.md              # File history
@@ -185,6 +187,9 @@ docz-cli rollback G160-研发:docs/guide.md abc1234  # Rollback file to a specif
 docz-cli trash G160-研发                           # View deleted files
 docz-cli restore G160-研发:deleted.md del1234      # Restore file from trash
 ```
+
+`mv` 的第二个参数是相对于 Space 根目录的完整目标路径（包含最终文件名），
+不是相对于源文件所在目录的路径。目标父目录必须已存在。
 
 ### Comments
 

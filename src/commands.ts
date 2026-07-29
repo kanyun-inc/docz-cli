@@ -9,6 +9,7 @@ import {
   ConflictError,
   DocSyncClient,
   type LinkDiagnostic,
+  MoveError,
   type ShareLinkInspection,
 } from './client.js';
 import { startCollabBridge } from './collab/bridge.js';
@@ -94,6 +95,82 @@ function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+const INVALID_WINDOWS_PATH_CHARS = /[<>:"\\|?*]/;
+const WINDOWS_DEVICE_NAME = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/i;
+
+/** Validate a complete destination path relative to the Space root. */
+export function validateDestinationPath(path: string): string | null {
+  if (!path) return 'destination path is required';
+  if (path.startsWith('/')) {
+    return 'destination must be relative to the Space root';
+  }
+
+  for (const segment of path.split('/')) {
+    if (!segment) return 'destination contains an empty path segment';
+    if (segment === '.' || segment === '..') {
+      return 'destination cannot contain "." or ".." segments';
+    }
+    if (Buffer.byteLength(segment, 'utf8') > 255) {
+      return 'a destination path segment exceeds 255 UTF-8 bytes';
+    }
+    if ([...segment].some((char) => char.charCodeAt(0) <= 0x1f)) {
+      return 'destination contains an ASCII control character';
+    }
+    if (INVALID_WINDOWS_PATH_CHARS.test(segment)) {
+      return 'destination contains a character invalid on Windows';
+    }
+    if (segment.endsWith(' ') || segment.endsWith('.')) {
+      return 'a destination path segment ends with a space or dot';
+    }
+    if (WINDOWS_DEVICE_NAME.test(segment)) {
+      return 'destination contains a Windows reserved device name';
+    }
+  }
+  return null;
+}
+
+export interface MoveFailurePresentation {
+  lines: string[];
+  exitCode: 1 | 2;
+}
+
+export function describeMoveFailure(
+  err: unknown,
+  spaceId: string,
+  from: string,
+  to: string
+): MoveFailurePresentation {
+  const detail =
+    err instanceof MoveError
+      ? err.detail
+      : {
+          error: 'move_status_unknown',
+          message: err instanceof Error ? err.message : String(err),
+          outcome: 'unknown' as const,
+          old_path: from,
+          new_path: to,
+        };
+  const oldPath = detail.old_path || from;
+  const newPath = detail.new_path || to;
+  const lines = [
+    `Error: ${detail.message}`,
+    `Resolved move: ${oldPath} → ${newPath}`,
+  ];
+
+  if (detail.error === 'destination_parent_not_found' && detail.parent_path) {
+    lines.push(
+      `Hint: create the parent first with \`docz mkdir ${spaceId}:${detail.parent_path}\`.`
+    );
+  }
+  if (detail.outcome === 'unknown') {
+    lines.push(
+      'Outcome unknown: verify both source and destination paths before retrying.'
+    );
+  }
+
+  return { lines, exitCode: detail.outcome === 'unknown' ? 2 : 1 };
 }
 
 // Share URL: /share/{token}
@@ -709,18 +786,43 @@ export function registerCommands(program: Command): void {
   // --- mv ---
   program
     .command('mv')
-    .description('Rename/move — docz mv <space>:<from> <to> or <url> <to>')
-    .argument('<target>', 'space:old-path or short URL')
-    .argument('<to>', 'new-path')
-    .action(async (target: string, to: string) => {
+    .description(
+      'Rename or move within a Space — destination is a full Space-root-relative path'
+    )
+    .argument('<source>', 'space:source-path or Docz URL')
+    .argument(
+      '<destination-path>',
+      'full path relative to the Space root, including the final name'
+    )
+    .action(async (source: string, destinationPath: string) => {
+      const invalidReason = validateDestinationPath(destinationPath);
+      if (invalidReason) {
+        console.error(`Error: invalid destination path: ${invalidReason}.`);
+        process.exitCode = 1;
+        return;
+      }
+
       const client = getClient();
-      const { spaceId, path: from } = await resolveTarget(client, [target]);
+      const { spaceId, path: from } = await resolveTarget(client, [source]);
       if (!from) {
         console.error('Error: source path is required.');
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
-      await client.mv(spaceId, from, to);
-      console.log(`Moved: ${from} → ${to}`);
+      try {
+        await client.mv(spaceId, from, destinationPath);
+      } catch (err) {
+        const presentation = describeMoveFailure(
+          err,
+          spaceId,
+          from,
+          destinationPath
+        );
+        for (const line of presentation.lines) console.error(line);
+        process.exitCode = presentation.exitCode;
+        return;
+      }
+      console.log(`Moved: ${from} → ${destinationPath}`);
     });
 
   // --- log ---
