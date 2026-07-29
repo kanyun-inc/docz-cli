@@ -100,28 +100,6 @@ npx docz-cli@latest link info <url> [--json]              # inspect ordinary lin
 npx docz-cli@latest local root [--json]                   # print configured local sync root only
 ```
 
-### Local Sync Directory Policy
-
-Use the local synchronization root only to accelerate bulk, multi-document
-searches. It is not a write target and its freshness is not guaranteed.
-
-1. Run `local root --json`; this only reads client configuration and MUST NOT
-   enumerate synchronized files.
-2. If the root exists, show its path and ask the user whether this task may
-   search it. State that the local copy may be stale.
-3. Before explicit confirmation, do not run `find`, `rg`, directory listings,
-   or read any file beneath the root.
-4. After confirmation, limit access to read-only search for the current task.
-   Do not treat confirmation as a persistent permission.
-5. Never create, edit, delete, rename, or move a local synchronized file.
-6. After local search identifies a document, re-read the current remote
-   content before editing. Use `collab cat/write` for an existing supported
-   text document. Use plain `write` to create a new text file because
-   collaborative editing cannot create files. Use the other Docz CLI commands
-   for upload, directory, move, and delete operations.
-7. If collaboration is unavailable, fall back to remote `cat/write`, never to
-   a local filesystem write.
-
 ### Safe Write (with conflict detection)
 
 ```bash
@@ -243,6 +221,31 @@ npx docz-cli@latest diff G160-研发:docs/guide.md af0fb9b          # file-level
 npx docz-cli@latest diff G160-研发:docs/guide.md af0fb9b b2c3d4e  # compare two commits
 npx docz-cli@latest diff G160-研发 af0fb9b                         # space-level: which files changed
 ```
+
+### Local Sync Search (Opt-in)
+
+Use the local synchronization root only when the user needs a bulk or
+multi-document search and the local copy would materially accelerate it. Do not
+run `local root` for ordinary reads or edits, or use the local copy as the
+default document source. The local root is never a write target, and its
+freshness is not guaranteed.
+
+1. Run `local root --json` only for the search scenario above. This reads
+   client configuration only and MUST NOT enumerate synchronized files.
+2. If the root exists, show its path and ask the user whether this task may
+   search it. State that the local copy may be stale.
+3. Before explicit confirmation, do not run `find`, `rg`, directory listings,
+   or read any file beneath the root.
+4. After confirmation, limit access to read-only search for the current task.
+   Do not treat confirmation as a persistent permission.
+5. Never create, edit, delete, rename, or move a local synchronized file.
+6. After local search identifies a document, re-read the current remote
+   content before editing. Use `collab cat/write` for an existing supported
+   text document. Use plain `write` to create a new text file because
+   collaborative editing cannot create files. Use the other Docz CLI commands
+   for upload, directory, move, and delete operations.
+7. If collaboration is unavailable, fall back to remote `cat/write`, never to
+   a local filesystem write.
 
 ### Neovim / Terminal Editor Bridge
 
