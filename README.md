@@ -83,10 +83,12 @@ export DOCSYNC_API_TOKEN=<your-token>
 | `write <space>:<path> <content>` | Write content to file (`-` for stdin) |
 | `mkdir <space>:<path>` | Create folder |
 | `rm <space>:<path>` | Delete file/folder (30-day trash) |
-| `mv <space>:<from> <to>` | Rename or move |
+| `mv <source> <destination-path>` | Rename or move within a Space |
 | `log <space>[:<path>]` | Show change history |
 | `rollback <space>:<path> <commit>` | Rollback file to a specific commit |
 | `shortlink <space>:<path>` | Get short URL for file |
+| `link info <url> [--json]` | Inspect ordinary link, Space permission, path, and document status |
+| `local root [--json]` | Print the configured local synchronization root |
 | `trash <space>` | Show deleted files |
 | `restore <space>:<path> <commit>` | Restore file from trash |
 | `diff <space>[:<path>] <commit> [<from>]` | Show changes (file or space level) |
@@ -99,7 +101,7 @@ export DOCSYNC_API_TOKEN=<your-token>
 | `share list <space>` | List share links |
 | `share update <space> <link-id>` | Update share link |
 | `share cat <token-or-url>` | Read shared file |
-| `share info <token-or-url>` | Show share link info |
+| `share info <token-or-url> [--json]` | Inspect share lifecycle, access, and target status |
 | `share rm <space> <link-id>` | Delete share link |
 | `mcp` | Start MCP stdio server |
 
@@ -132,6 +134,47 @@ docz-cli ls https://docz.zhenguanyu.com/s/yanfa
 docz-cli log https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c
 ```
 
+### Link Metadata
+
+Ordinary and share links use separate commands and output contracts. Link
+lifecycle and target document status are reported independently.
+
+```bash
+# Ordinary stable/path/root/legacy links (authentication required)
+docz-cli link info https://docz.zhenguanyu.com/s/yanfa/f/NNjrcj8c
+docz-cli link info https://docz.zhenguanyu.com/s/yanfa/docs/guide.md --json
+
+# Share token or URL (public shares can be inspected without a token)
+docz-cli share info https://docz.zhenguanyu.com/share/xYz123AbC
+docz-cli share info xYz123AbC --json
+```
+
+Ordinary JSON includes `link_status`, `space_permission`, `document_path`,
+`document_status`, `space_admin`, and `is_folder`. Share JSON additionally uses
+share-specific fields such as `access_status`, `visibility`, `role`,
+`shared_by`, and `expires_at`. Technical failures produce `unknown` values and
+exit code 2 instead of incorrectly reporting a missing link or document.
+
+### Local Sync Root
+
+```bash
+docz local root
+docz local root --json
+DOCSYNC_CLIENT_DATA_DIR=/custom/client-data docz local root --json
+```
+
+This command only reads `sync_dir` from the local DocSync client configuration.
+It does not connect to the daemon, enumerate or read synchronized files, or
+claim that the local copy is current. JSON therefore reports
+`"freshness":"unknown"`. If the configured root is missing, the command still
+prints the path and exits with code 2.
+
+AI agents must ask for task-scoped user confirmation before searching or
+reading files below this root. The synchronized directory is always read-only
+to agents: existing documents are edited through `collab cat/write`, new text
+documents through `write`, and other mutations through the corresponding Docz
+CLI commands.
+
 ### Write
 
 ```bash
@@ -155,7 +198,9 @@ docz-cli image upload ./screenshot.png
 ### Manage
 
 ```bash
-docz-cli mv G160-研发:old.md new.md              # Rename
+docz-cli mv G160-研发:old.md new.md                   # Rename in the Space root
+docz-cli mv G160-研发:docs/old.md archive/new.md      # Move and rename
+docz-cli mv https://docz.example.com/s/abc docs/new.md # URL source
 docz-cli rm G160-研发:deprecated.md               # Delete (recoverable for 30 days)
 docz-cli log G160-研发                             # Space history
 docz-cli log G160-研发:docs/guide.md              # File history
@@ -163,6 +208,9 @@ docz-cli rollback G160-研发:docs/guide.md abc1234  # Rollback file to a specif
 docz-cli trash G160-研发                           # View deleted files
 docz-cli restore G160-研发:deleted.md del1234      # Restore file from trash
 ```
+
+`mv` 的第二个参数是相对于 Space 根目录的完整目标路径（包含最终文件名），
+不是相对于源文件所在目录的路径。目标父目录必须已存在。
 
 ### Comments
 
@@ -189,8 +237,9 @@ docz-cli share cat xYz123AbC
 docz-cli share cat https://docz.zhenguanyu.com/share/xYz123AbC
 docz-cli share cat xYz123AbC --raw | grep "部署"  # Raw output for pipes
 
-# View share link info
+# View share link info (human or JSON)
 docz-cli share info xYz123AbC
+docz-cli share info xYz123AbC --json
 
 # Update and delete (requires space context)
 docz-cli share update G160-研发 <link-id> --expires 30d

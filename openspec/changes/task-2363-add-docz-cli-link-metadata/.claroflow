@@ -1,0 +1,27 @@
+{
+  "taskId": "2363",
+  "title": "Docz CLI 支持普通链接和分享链接元信息查询",
+  "storyId": "1688",
+  "assignee": {
+    "ldapUid": "yanhongkang",
+    "name": "闫洪康"
+  },
+  "repositories": [
+    {
+      "repoName": "docz-cli",
+      "branch": "feature/task-2363-add-docz-cli-link-metadata"
+    },
+    {
+      "repoName": "conan-docz",
+      "branch": "feature/task-2363-add-docz-cli-link-metadata"
+    }
+  ],
+  "prd": {
+    "syncedAt": "2026-07-28T20:48:34+08:00",
+    "doczLinks": []
+  },
+  "lifecycle": {
+    "lastState": "coding",
+    "lastTransitionAt": "2026-07-28T20:53:12+08:00"
+  }
+}
