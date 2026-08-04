@@ -25,6 +25,12 @@ export interface TreeEntry {
   size: number;
 }
 
+export interface RecursiveTreeEntry {
+  path: string;
+  type: 'blob' | 'tree';
+  size: number;
+}
+
 export interface LogEntry {
   hash: string;
   author: string;
@@ -361,8 +367,19 @@ export class DocSyncClient {
     );
   }
 
-  async treeFull(spaceId: string): Promise<TreeEntry[]> {
-    return this.request(`/api/spaces/${spaceId}/tree/full`);
+  async treeFull(spaceId: string, path = ''): Promise<RecursiveTreeEntry[]> {
+    const entries = await this.request<RecursiveTreeEntry[]>(
+      `/api/spaces/${spaceId}/tree/full`
+    );
+    const targetPath = path.replace(/^\/+|\/+$/g, '');
+    if (!targetPath) return entries;
+
+    const childPrefix = `${targetPath}/`;
+    return entries.filter(
+      (entry) =>
+        (entry.path === targetPath && entry.type === 'blob') ||
+        entry.path.startsWith(childPrefix)
+    );
   }
 
   // --- Blob ---

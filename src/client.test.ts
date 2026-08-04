@@ -33,6 +33,15 @@ const mockTree = [
   { name: 'docs', type: 'tree', size: 0 },
 ];
 
+const mockFullTree = [
+  { path: 'README.md', type: 'blob', size: 1024 },
+  { path: 'docs', type: 'tree', size: 0 },
+  { path: 'docs/guide.md', type: 'blob', size: 512 },
+  { path: 'docs/nested', type: 'tree', size: 0 },
+  { path: 'docs/nested/example.md', type: 'blob', size: 256 },
+  { path: 'docs-old/archive.md', type: 'blob', size: 128 },
+];
+
 const mockLog = [
   {
     hash: 'abc1234',
@@ -145,10 +154,7 @@ const server = setupServer(
   http.get(`${BASE}/api/spaces/:sid/tree`, () => HttpResponse.json(mockTree)),
 
   http.get(`${BASE}/api/spaces/:sid/tree/full`, () =>
-    HttpResponse.json([
-      ...mockTree,
-      { name: 'docs/guide.md', type: 'blob', size: 512 },
-    ])
+    HttpResponse.json(mockFullTree)
   ),
 
   http.get(`${BASE}/api/spaces/:sid/blob/:fp`, ({ params }) => {
@@ -534,9 +540,22 @@ describe('DocSyncClient', () => {
     expect(entries[0].name).toBe('README.md');
   });
 
-  it('treeFull() returns recursive entries', async () => {
+  it('treeFull() returns recursive entries with full paths from Space root', async () => {
     const entries = await c.treeFull(SID);
-    expect(entries).toHaveLength(3);
+    expect(entries).toEqual(mockFullTree);
+    expect(entries[2].path).toBe('docs/guide.md');
+  });
+
+  it('treeFull() limits recursive entries to the requested subdirectory', async () => {
+    const entries = await c.treeFull(SID, '/docs/');
+    expect(entries.map((entry) => entry.path)).toEqual([
+      'docs/guide.md',
+      'docs/nested',
+      'docs/nested/example.md',
+    ]);
+    expect(entries.some((entry) => entry.path.startsWith('docs-old/'))).toBe(
+      false
+    );
   });
 
   it('cat() returns content', async () => {

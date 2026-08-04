@@ -606,9 +606,18 @@ export async function startMcpServer(): Promise<void> {
 
         case 'docz_list_files': {
           const sid = await resolveSpaceId(client, String(args.space));
-          const entries = args.recursive
-            ? await client.treeFull(sid)
-            : await client.ls(sid, String(args.path ?? ''));
+          const path = String(args.path ?? '');
+          if (args.recursive) {
+            const entries = await client.treeFull(sid, path);
+            if (entries.length === 0) return ok('（空目录）');
+            const lines = entries.map((e) => {
+              const size = e.type === 'blob' ? ` (${formatSize(e.size)})` : '';
+              return `${e.type === 'tree' ? '📁' : '📄'} ${e.path}${size}`;
+            });
+            return ok(lines.join('\n'));
+          }
+
+          const entries = await client.ls(sid, path);
           if (entries.length === 0) return ok('（空目录）');
           const lines = entries.map((e) => {
             const size = e.type === 'blob' ? ` (${formatSize(e.size)})` : '';
