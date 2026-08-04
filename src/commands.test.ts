@@ -1,9 +1,18 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Command } from 'commander';
 import { HttpResponse, http } from 'msw';
 import { setupServer } from 'msw/node';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import { DocSyncClient, MoveError } from './client.js';
 import {
   describeMoveFailure,
@@ -15,6 +24,7 @@ import {
   parseNormalLink,
   parseTarget,
   readImageFile,
+  registerCommands,
   resolveSpaceArg,
   resolveTarget,
   validateDestinationPath,
@@ -55,6 +65,14 @@ const mockFileRef = {
   path: 'docs/guide.md',
 };
 
+const mockFullTree = [
+  { path: 'README.md', type: 'blob', size: 1024 },
+  { path: 'docs', type: 'tree', size: 0 },
+  { path: 'docs/guide.md', type: 'blob', size: 512 },
+  { path: 'docs/nested/example.md', type: 'blob', size: 256 },
+  { path: 'docs-old/archive.md', type: 'blob', size: 128 },
+];
+
 const server = setupServer(
   http.get(`${BASE}/api/spaces`, () => HttpResponse.json(mockSpaces)),
 
@@ -73,12 +91,59 @@ const server = setupServer(
         path: 'AI-Coding技巧总结-摘要.md',
       });
     return HttpResponse.text('not found', { status: 404 });
-  })
+  }),
+
+  http.get(`${BASE}/api/spaces/:sid/tree/full`, () =>
+    HttpResponse.json(mockFullTree)
+  )
 );
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
-afterEach(() => server.resetHandlers());
+afterEach(() => {
+  server.resetHandlers();
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  Reflect.deleteProperty(globalThis, '__VERSION__');
+});
 afterAll(() => server.close());
+
+// ---------------------------------------------------------------------------
+// ls -R
+// ---------------------------------------------------------------------------
+
+async function runRecursiveLs(target: string): Promise<string[]> {
+  vi.stubEnv('DOCSYNC_BASE_URL', BASE);
+  vi.stubEnv('DOCSYNC_API_TOKEN', TOKEN);
+  Reflect.set(globalThis, '__VERSION__', 'test');
+  const lines: string[] = [];
+  vi.spyOn(console, 'log').mockImplementation((message?: unknown) => {
+    lines.push(String(message));
+  });
+
+  const program = new Command().exitOverride();
+  registerCommands(program);
+  await program.parseAsync(['ls', '-R', target], { from: 'user' });
+  return lines;
+}
+
+describe('ls -R', () => {
+  it('prints full paths from the Space root without undefined names', async () => {
+    const lines = await runRecursiveLs('研发');
+
+    expect(lines).toContain('README.md\t1.0 KB');
+    expect(lines).toContain('docs/guide.md\t512 B');
+    expect(lines.join('\n')).not.toContain('undefined');
+  });
+
+  it('prints only entries below the requested subdirectory', async () => {
+    const lines = await runRecursiveLs('研发:docs');
+
+    expect(lines).toEqual([
+      'docs/guide.md\t512 B',
+      'docs/nested/example.md\t256 B',
+    ]);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // mv destination semantics

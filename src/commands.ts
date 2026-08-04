@@ -612,18 +612,31 @@ export function registerCommands(program: Command): void {
     .action(async (args: string[], opts: { recursive?: boolean }) => {
       const client = getClient();
       const { spaceId, path } = await resolveTarget(client, args);
-      const entries = opts.recursive
-        ? await client.treeFull(spaceId)
-        : await client.ls(spaceId, path);
-      if (entries.length === 0) {
-        console.log('(empty)');
-        return;
-      }
-      for (const e of entries) {
-        if (e.type === 'tree') {
-          console.log(`${e.name}/`);
-        } else {
-          console.log(`${e.name}\t${formatSize(e.size)}`);
+      if (opts.recursive) {
+        const entries = await client.treeFull(spaceId, path);
+        if (entries.length === 0) {
+          console.log('(empty)');
+          return;
+        }
+        for (const e of entries) {
+          if (e.type === 'tree') {
+            console.log(`${e.path}/`);
+          } else {
+            console.log(`${e.path}\t${formatSize(e.size)}`);
+          }
+        }
+      } else {
+        const entries = await client.ls(spaceId, path);
+        if (entries.length === 0) {
+          console.log('(empty)');
+          return;
+        }
+        for (const e of entries) {
+          if (e.type === 'tree') {
+            console.log(`${e.name}/`);
+          } else {
+            console.log(`${e.name}\t${formatSize(e.size)}`);
+          }
         }
       }
     });
