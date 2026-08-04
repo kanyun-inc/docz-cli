@@ -1,5 +1,11 @@
 # docz-cli
 
+## 0.11.1
+
+### Patch Changes
+
+- 6f1ea94: Fix `ls -R` to display complete recursive paths and limit results to the requested subdirectory.
+
 ## 0.11.0
 
 ### Minor Changes
