@@ -10,7 +10,16 @@ export type SheetFailureCode =
   | 'sheet_write_invalid_values'
   | 'sheet_write_sdk_incompatible'
   | 'sheet_write_command_failed'
-  | 'initial_load_failed';
+  | 'initial_load_failed'
+  | 'sheet_write_forbidden'
+  | 'operation_begin_unconfirmed'
+  | 'sheet_identity_changed'
+  | 'operation_execution_not_claimed'
+  | 'interrupted_after_mutation'
+  | 'interrupted_before_mutation'
+  | 'pending_timeout'
+  | 'sync_confirmation_lost'
+  | 'sdk_rejected';
 
 /**
  * Convert an untrusted SDK/network error to a bounded diagnostic code. The

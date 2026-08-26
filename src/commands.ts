@@ -25,6 +25,7 @@ import { registerLocalCommands } from './local.js';
 import {
   classifySheetFailure,
   classifySheetWriteFailure,
+  type SheetFailureCode,
 } from './sheet/errors.js';
 import { parseSheetRange, parseValuesMatrix } from './sheet/range.js';
 import type {
@@ -348,7 +349,7 @@ async function confirmSheetOperation(
     requestId: string;
     outcome: SheetOutcome;
     collaborationStatus: string;
-    failureCode?: string;
+    failureCode?: SheetFailureCode;
     deadlineAt: string;
     timeoutMs: number;
     startRevision?: number;
@@ -450,6 +451,7 @@ export async function executeSheetGet(input: {
     sheetRequestSignal(timeoutMs)
   );
   let sheet: OpenUniverSheet | undefined;
+  let readStarted = false;
   try {
     sheet = await (input.opener ?? lazyOpenUniverSheet)({
       session,
@@ -459,6 +461,7 @@ export async function executeSheetGet(input: {
       timeoutMs,
     });
     const collaborationStatus = await sheet.waitForInitialSync(timeoutMs);
+    readStarted = true;
     return {
       outcome: 'SYNCED',
       phase: 'read',
@@ -472,7 +475,7 @@ export async function executeSheetGet(input: {
   } catch (error) {
     return {
       outcome: 'FAILED',
-      phase: 'load',
+      phase: readStarted ? 'read' : 'load',
       space_id: session.space_id,
       path: session.path,
       unit_id: session.unit_id,

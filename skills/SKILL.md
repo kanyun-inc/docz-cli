@@ -193,6 +193,9 @@ npx docz-cli@latest sheet set <space>:<path.sheet.json> \
 - `sheet get` is available to owner/member/viewer with read access.
 - `sheet set` is available to owner/member only. Its values must be a
   rectangular two-dimensional JSON matrix matching the range.
+- The session API maps Docz roles to Univer roles as owner -> owner,
+  member -> editor, and viewer -> reader; authorization still comes from
+  `can_read` / `can_write`, not a client-declared role.
 - Treat `SYNCED`/exit 0 as confirmed, `FAILED`/exit 1 as definitely not
   applied, and `UNKNOWN`/exit 2 as possibly applied.
 - On `UNKNOWN`, preserve the request ID and reread the range before any retry.

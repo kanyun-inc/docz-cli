@@ -1,3 +1,5 @@
+import type { SheetFailureCode } from './errors.js';
+
 export type SheetOutcome = 'SYNCED' | 'FAILED' | 'UNKNOWN';
 
 export interface SheetSession {
@@ -5,6 +7,8 @@ export interface SheetSession {
   path: string;
   file_ref_id: string;
   unit_id: string;
+  // Univer role mapped from the Docz Space role:
+  // owner -> owner, member -> editor, viewer -> reader.
   role: 'owner' | 'editor' | 'reader';
   can_read: boolean;
   can_write: boolean;
@@ -26,7 +30,7 @@ export interface SheetOperation {
   outcome: 'PENDING' | SheetOutcome;
   execution_allowed?: boolean;
   last_collaboration_status?: string;
-  failure_code?: string;
+  failure_code?: SheetFailureCode;
   start_revision?: number;
   end_revision?: number;
   revision_verified?: boolean;
@@ -44,7 +48,7 @@ export interface SheetCommandResult {
   operation_id?: string;
   range: string;
   values?: unknown[][];
-  failure_code?: string;
+  failure_code?: SheetFailureCode;
   warning?: string;
 }
 

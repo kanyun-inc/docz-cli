@@ -128,7 +128,10 @@ describe('Sheet commands', () => {
       clientVersion: 'test',
       opener: vi.fn(async () => sheet),
     });
-    expect(result.failure_code).toBe('sheet_worksheet_not_found');
+    expect(result).toMatchObject({
+      phase: 'read',
+      failure_code: 'sheet_worksheet_not_found',
+    });
     expect(JSON.stringify(result)).not.toContain(sensitive);
   });
 

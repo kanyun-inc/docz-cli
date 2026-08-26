@@ -5,6 +5,7 @@
  * 认证：Authorization: Bearer {token}（支持 JWT 和永久 API Token）。
  */
 
+import type { SheetFailureCode } from './sheet/errors.js';
 import type {
   SheetOperation,
   SheetOutcome,
@@ -734,7 +735,7 @@ export class DocSyncClient {
     operationId: string;
     outcome: SheetOutcome;
     collaborationStatus: string;
-    failureCode?: string;
+    failureCode?: SheetFailureCode;
     startRevision?: number;
     endRevision?: number;
     revisionVerified?: boolean;

@@ -201,6 +201,9 @@ docz-cli image upload ./screenshot.png
 
 Sheet commands read and write the current Univer collaboration state; they do
 not edit the `.sheet.json` descriptor or a stale Git snapshot.
+Session roles use Univer's mapped names: Docz `owner → owner`,
+`member → editor`, and `viewer → reader`; user-facing permissions below remain
+expressed as Docz Space roles.
 
 ```bash
 docz-cli sheet get G160-研发:reports/Budget.sheet.json \
@@ -228,7 +231,7 @@ range before deciding whether to retry; do not retry blindly.
 ```bash
 docz-cli mv G160-研发:old.md new.md                   # Rename in the Space root
 docz-cli mv G160-研发:docs/old.md archive/new.md      # Move and rename
-docz-cli mv https://docz.example.com/s/abc docs/new.md # URL source
+docz-cli mv https://docz.example.com/s/abc/docs/old.md docs/new.md # URL source
 docz-cli rm G160-研发:deprecated.md               # Delete (recoverable for 30 days)
 docz-cli log G160-研发                             # Space history
 docz-cli log G160-研发:docs/guide.md              # File history
