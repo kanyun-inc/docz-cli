@@ -89,6 +89,8 @@ export DOCSYNC_API_TOKEN=<your-token>
 | `shortlink <space>:<path>` | Get short URL for file |
 | `link info <url> [--json]` | Inspect ordinary link, Space permission, path, and document status |
 | `local root [--json]` | Print the configured local synchronization root |
+| `sheet get <target> --range <sheet!a1>` | Read a range from the live Univer collaboration state |
+| `sheet set <target> --range <sheet!a1> --values-json <matrix>` | Write a range through Univer OT and confirm the result |
 | `trash <space>` | Show deleted files |
 | `restore <space>:<path> <commit>` | Restore file from trash |
 | `diff <space>[:<path>] <commit> [<from>]` | Show changes (file or space level) |
@@ -194,6 +196,32 @@ docz-cli image upload ./screenshot.png
 # URL: https://<bucket>.oss-cn-beijing.aliyuncs.com/docz-markdown/2026/06/.../image.png
 # Markdown: ![screenshot](https://...)
 ```
+
+### Univer Sheets
+
+Sheet commands read and write the current Univer collaboration state; they do
+not edit the `.sheet.json` descriptor or a stale Git snapshot.
+
+```bash
+docz-cli sheet get G160-研发:reports/Budget.sheet.json \
+  --range 'Sheet1!A1:B2' --json
+
+docz-cli sheet set G160-研发:reports/Budget.sheet.json \
+  --range 'Sheet1!A1:B2' \
+  --values-json '[["name","amount"],["demo",3014]]' \
+  --request-id '4e8c29b7-f3e8-4db5-86ae-0878dc1fa88c' \
+  --timeout 30000 --json
+```
+
+`--values-json` must be a rectangular two-dimensional JSON matrix matching the
+requested range. The maximum per-phase timeout is 30000 ms. A stable
+`--request-id` makes audit lookup and reconciliation safe, but replaying an
+uncertain request never sends a second mutation automatically.
+
+Exit codes are `0` for `SYNCED`, `1` for definite `FAILED`, and `2` for
+`UNKNOWN`. `UNKNOWN` means the write may have reached Univer but the CLI could
+not observe the state cycle and matching collaboration revision acknowledgement. Reread the
+range before deciding whether to retry; do not retry blindly.
 
 ### Manage
 

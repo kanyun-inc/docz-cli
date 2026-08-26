@@ -735,6 +735,7 @@ export class DocSyncClient {
     outcome: SheetOutcome;
     collaborationStatus: string;
     failureCode?: string;
+    startRevision?: number;
     endRevision?: number;
     revisionVerified?: boolean;
     signal?: AbortSignal;
@@ -749,6 +750,7 @@ export class DocSyncClient {
           outcome: input.outcome,
           collaboration_status: input.collaborationStatus,
           failure_code: input.failureCode ?? '',
+          start_revision: input.startRevision,
           end_revision: input.endRevision,
           revision_verified: input.revisionVerified ?? false,
         }),

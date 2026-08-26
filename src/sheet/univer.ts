@@ -27,7 +27,10 @@ import {
 } from '@univerjs/network';
 import { SetRangeValuesCommand, UniverSheetsPlugin } from '@univerjs/sheets';
 import sheetsEnUS from '@univerjs/sheets/locale/en-US';
-import { UniverCollaborationPlugin } from '@univerjs-pro/collaboration';
+import {
+  RevisionService,
+  UniverCollaborationPlugin,
+} from '@univerjs-pro/collaboration';
 import {
   CollaborationSessionService,
   CollaborationStatus,
@@ -176,12 +179,34 @@ export function closePendingCollaborationSocket(service: unknown): void {
   // ws emits an asynchronous error when close() interrupts CONNECTING. Keep a
   // short-lived no-op subscriber so that expected cleanup cannot become an
   // uncaught process-level error after Univer disposes its own subscriptions.
-  const errorSubscription = candidate?.error$?.subscribe(() => {});
-  candidate?.close?.();
+  let errorSubscription: { unsubscribe(): void } | undefined;
+  try {
+    errorSubscription = candidate?.error$?.subscribe(() => {});
+    candidate?.close?.();
+  } catch {
+    errorSubscription?.unsubscribe();
+    return;
+  }
   if (errorSubscription) {
     const timer = setTimeout(() => errorSubscription.unsubscribe(), 1_000);
     timer.unref?.();
   }
+}
+
+export function runDeferredCleanup(cleanups: Array<() => void>): Promise<void> {
+  return new Promise((resolve) => {
+    setImmediate(() => {
+      for (const cleanup of cleanups) {
+        try {
+          cleanup();
+        } catch {
+          // Teardown is best effort and must never mask the command result or
+          // become an unhandled rejection during process shutdown.
+        }
+      }
+      resolve();
+    });
+  });
 }
 
 function statusName(status: CollaborationStatus): string {
@@ -334,27 +359,34 @@ export async function openUniverSheet(
   // sockets safely when a short-lived CLI process exits.
   univer.registerPlugin(SheetNodeSocketPlugin, undefined);
   const univerAPI = FUniver.newAPI(univer);
-  let disposed = false;
-  const dispose = () => {
-    if (disposed) return;
-    disposed = true;
-    const collaborationSessions = univer
-      .__getInjector()
-      .get(CollaborationSessionService);
+  let disposePromise: Promise<void> | undefined;
+  const dispose = (): Promise<void> => {
+    if (disposePromise) return disposePromise;
+    let collaborationSessions: CollaborationSessionService | undefined;
+    try {
+      collaborationSessions = univer
+        .__getInjector()
+        .get(CollaborationSessionService);
+    } catch {
+      // Plugin startup can fail before the collaboration service is bound.
+    }
     closePendingCollaborationSocket(collaborationSessions);
     // ws reports an interrupted CONNECTING socket on nextTick. Keep Univer's
     // error subscriptions alive through that emission, then finish teardown.
-    setImmediate(() => {
-      collaborationSessions.closeSession(options.session.unit_id);
-      collaborationSessions.dispose();
-      const socketService = univer.__getInjector().get(ISocketService) as {
-        dispose?: () => void;
-      };
-      socketService.dispose?.();
-      univerAPI.disposeUnit(options.session.unit_id);
-      univerAPI.dispose();
-      univer.dispose();
-    });
+    disposePromise = runDeferredCleanup([
+      () => collaborationSessions?.closeSession(options.session.unit_id),
+      () => collaborationSessions?.dispose(),
+      () => {
+        const socketService = univer.__getInjector().get(ISocketService) as {
+          dispose?: () => void;
+        };
+        socketService.dispose?.();
+      },
+      () => univerAPI.disposeUnit(options.session.unit_id),
+      () => univerAPI.dispose(),
+      () => univer.dispose(),
+    ]);
+    return disposePromise;
   };
   try {
     const collaboration = univerAPI.getCollaboration();
@@ -379,6 +411,7 @@ export async function openUniverSheet(
       return sheet.getRange(a1);
     };
     const commandService = univer.__getInjector().get(ICommandService);
+    const revisionService = univer.__getInjector().get(RevisionService);
 
     return {
       read: (sheetName, a1) => resolveRange(sheetName, a1).getValues(),
@@ -404,6 +437,8 @@ export async function openUniverSheet(
           throw new Error('Univer rejected the Sheet write command.');
       },
       status: () => statusName(currentStatus()),
+      revision: () =>
+        revisionService.getCurrentRevOfUnit(options.session.unit_id),
       waitForInitialSync: (timeoutMs = 20_000) =>
         waitUntil(
           currentStatus,
@@ -411,29 +446,37 @@ export async function openUniverSheet(
           timeoutMs,
           subscribeStatus
         ),
-      waitForWriteSync: (timeoutMs = 20_000, mutationApplied = () => true) => {
-        let sawPending = false;
-        let mutationAppliedAt: number | undefined;
+      waitForWriteSync: (
+        timeoutMs = 20_000,
+        mutationStarted = () => true,
+        mutationApplied = () => true
+      ) => {
+        const startRevision = revisionService.getCurrentRevOfUnit(
+          options.session.unit_id
+        );
+        let sawUnsynchronizedState = false;
         return waitUntil(
           currentStatus,
           (value) => {
-            if (value !== CollaborationStatus.SYNCED) sawPending = true;
+            if (mutationStarted() && value !== CollaborationStatus.SYNCED) {
+              sawUnsynchronizedState = true;
+            }
             if (!mutationApplied()) return false;
-            mutationAppliedAt ??= Date.now();
             return (
+              sawUnsynchronizedState &&
               value === CollaborationStatus.SYNCED &&
-              (sawPending || Date.now() - mutationAppliedAt >= 100)
+              revisionService.getCurrentRevOfUnit(options.session.unit_id) >
+                startRevision
             );
           },
           timeoutMs,
-          subscribeStatus,
-          100
+          subscribeStatus
         );
       },
       dispose,
     };
   } catch (error) {
-    dispose();
+    await dispose();
     throw error;
   }
 }

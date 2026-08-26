@@ -2,6 +2,7 @@ import { CollaborationStatus } from '@univerjs-pro/collaboration-client';
 import { describe, expect, it, vi } from 'vitest';
 import {
   closePendingCollaborationSocket,
+  runDeferredCleanup,
   validateUniverEndpoint,
   waitUntil,
   withUniverTimeout,
@@ -84,6 +85,38 @@ describe('Univer collaboration status wait', () => {
     listener?.(CollaborationStatus.OFFLINE);
     await expect(waiting).rejects.toThrow('offline');
   });
+
+  it('does not accept SYNCED until state cycles and revision advances', async () => {
+    vi.useFakeTimers();
+    let revision = 7;
+    let sawUnsynchronizedState = false;
+    const waiting = waitUntil(
+      () => CollaborationStatus.SYNCED,
+      (value) => {
+        if (value !== CollaborationStatus.SYNCED) sawUnsynchronizedState = true;
+        return (
+          sawUnsynchronizedState &&
+          value === CollaborationStatus.SYNCED &&
+          revision > 7
+        );
+      },
+      1_000,
+      (listener) => {
+        listener(CollaborationStatus.PENDING);
+        return { dispose: vi.fn() };
+      }
+    );
+    let settled = false;
+    void waiting.finally(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(settled).toBe(false);
+    revision = 8;
+    await vi.advanceTimersByTimeAsync(100);
+    await expect(waiting).resolves.toBe('SYNCED');
+    vi.useRealTimers();
+  });
 });
 
 describe('Univer Node cleanup', () => {
@@ -100,5 +133,19 @@ describe('Univer Node cleanup', () => {
 
   it('is safe when no candidate socket exists', () => {
     expect(() => closePendingCollaborationSocket({})).not.toThrow();
+  });
+
+  it('awaits best-effort cleanup and absorbs cleanup errors', async () => {
+    const order: string[] = [];
+    await expect(
+      runDeferredCleanup([
+        () => order.push('first'),
+        () => {
+          throw new Error('cleanup failed');
+        },
+        () => order.push('last'),
+      ])
+    ).resolves.toBeUndefined();
+    expect(order).toEqual(['first', 'last']);
   });
 });

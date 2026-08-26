@@ -27,6 +27,9 @@ export interface SheetOperation {
   execution_allowed?: boolean;
   last_collaboration_status?: string;
   failure_code?: string;
+  start_revision?: number;
+  end_revision?: number;
+  revision_verified?: boolean;
   deadline_at: string;
 }
 
@@ -62,12 +65,14 @@ export interface OpenUniverSheet {
     onMutationMayHaveBeenSent?: () => void
   ): void | Promise<void>;
   status(): string;
+  revision(): number;
   waitForInitialSync(timeoutMs?: number): Promise<string>;
   waitForWriteSync(
     timeoutMs?: number,
+    mutationStarted?: () => boolean,
     mutationApplied?: () => boolean
   ): Promise<string>;
-  dispose(): void;
+  dispose(): Promise<void>;
 }
 
 export type SheetOpener = (

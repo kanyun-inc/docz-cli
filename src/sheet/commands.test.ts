@@ -43,9 +43,10 @@ function fakeSheet(overrides: Partial<OpenUniverSheet> = {}): OpenUniverSheet {
     read: vi.fn(() => [[42]]),
     write: vi.fn((_sheetName, _a1, _values, markMutation) => markMutation?.()),
     status: vi.fn(() => 'SYNCED'),
+    revision: vi.fn(() => 2),
     waitForInitialSync: vi.fn(async () => 'SYNCED'),
     waitForWriteSync: vi.fn(async () => 'SYNCED'),
-    dispose: vi.fn(),
+    dispose: vi.fn(async () => undefined),
     ...overrides,
   };
 }
@@ -82,6 +83,53 @@ describe('Sheet commands', () => {
     expect(result.outcome).toBe('SYNCED');
     expect(result.values).toEqual([[42]]);
     expect(sheet.dispose).toHaveBeenCalledOnce();
+  });
+
+  it('waits for deferred SDK cleanup before returning', async () => {
+    let cleaned = false;
+    const sheet = fakeSheet({
+      dispose: vi.fn(
+        () =>
+          new Promise<void>((resolve) =>
+            setImmediate(() => {
+              cleaned = true;
+              resolve();
+            })
+          )
+      ),
+    });
+    await executeSheetGet({
+      client: fakeClient(),
+      baseUrl: 'https://docz.example.com',
+      token: 'fake-token',
+      spaceId: 'space-1',
+      path: session.path,
+      range: 'Sheet1!A1',
+      clientVersion: 'test',
+      opener: vi.fn(async () => sheet),
+    });
+    expect(cleaned).toBe(true);
+  });
+
+  it('returns a bounded read diagnostic without exposing the SDK message', async () => {
+    const sensitive = 'wss://docz.example.com/comb?sessionTicket=never-log';
+    const sheet = fakeSheet({
+      read: vi.fn(() => {
+        throw new Error(`Worksheet "Missing" was not found: ${sensitive}`);
+      }),
+    });
+    const result = await executeSheetGet({
+      client: fakeClient(),
+      baseUrl: 'https://docz.example.com',
+      token: 'fake-token',
+      spaceId: 'space-1',
+      path: session.path,
+      range: 'Missing!A1',
+      clientVersion: 'test',
+      opener: vi.fn(async () => sheet),
+    });
+    expect(result.failure_code).toBe('sheet_worksheet_not_found');
+    expect(JSON.stringify(result)).not.toContain(sensitive);
   });
 
   it('rejects viewer writes before audit or mutation', async () => {
@@ -144,17 +192,21 @@ describe('Sheet commands', () => {
   it('reports SYNCED only after SDK synchronization and audit confirmation', async () => {
     const order: string[] = [];
     const sheet = fakeSheet({
+      revision: vi.fn().mockReturnValueOnce(1).mockReturnValue(2),
       write: vi.fn(async (_sheetName, _a1, _values, markMutation) => {
         order.push('write');
         markMutation?.();
       }),
-      waitForWriteSync: vi.fn(async (_timeoutMs, mutationApplied) => {
-        order.push('observe');
-        expect(mutationApplied?.()).toBe(false);
-        while (!mutationApplied?.()) await Promise.resolve();
-        order.push('synced');
-        return 'SYNCED';
-      }),
+      waitForWriteSync: vi.fn(
+        async (_timeoutMs, mutationStarted, mutationApplied) => {
+          order.push('observe');
+          expect(mutationStarted?.()).toBe(false);
+          expect(mutationApplied?.()).toBe(false);
+          while (!mutationApplied?.()) await Promise.resolve();
+          order.push('synced');
+          return 'SYNCED';
+        }
+      ),
     });
     const client = fakeClient();
     const result = await executeSheetSet({
@@ -178,7 +230,13 @@ describe('Sheet commands', () => {
       expect.any(Function)
     );
     expect(client.finalizeSheetOperation).toHaveBeenCalledWith(
-      expect.objectContaining({ outcome: 'SYNCED', operationId: 'op-1' })
+      expect.objectContaining({
+        outcome: 'SYNCED',
+        operationId: 'op-1',
+        startRevision: 1,
+        endRevision: 2,
+        revisionVerified: true,
+      })
     );
     expect(sheet.dispose).toHaveBeenCalledOnce();
   });
@@ -267,7 +325,7 @@ describe('Sheet commands', () => {
     expect(result).toMatchObject({
       outcome: 'FAILED',
       phase: 'write',
-      failure_code: 'sheet_write_command_failed',
+      failure_code: 'sheet_worksheet_not_found',
     });
     expect(result.warning).toBeUndefined();
     expect(finalize).toHaveBeenCalledWith(
@@ -462,6 +520,7 @@ describe('Sheet commands', () => {
     expect(sheet.waitForInitialSync).toHaveBeenCalledWith(expect.any(Number));
     expect(sheet.waitForWriteSync).toHaveBeenCalledWith(
       expect.any(Number),
+      expect.any(Function),
       expect.any(Function)
     );
   });

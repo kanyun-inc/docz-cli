@@ -4,6 +4,8 @@ export type SheetFailureCode =
   | 'collaboration_permission_denied'
   | 'collaboration_conflict'
   | 'sheet_read_failed'
+  | 'sheet_worksheet_not_found'
+  | 'sheet_range_invalid'
   | 'sheet_write_command_rejected'
   | 'sheet_write_invalid_values'
   | 'sheet_write_sdk_incompatible'
@@ -36,6 +38,12 @@ export function classifySheetFailure(
   }
   if (/conflict/.test(signature)) {
     return 'collaboration_conflict';
+  }
+  if (/worksheet.+not found/.test(signature)) {
+    return 'sheet_worksheet_not_found';
+  }
+  if (/invalid.+range|range.+invalid/.test(signature)) {
+    return 'sheet_range_invalid';
   }
   if (
     /offline|network|fetch failed|econn|socket|websocket|connection/.test(

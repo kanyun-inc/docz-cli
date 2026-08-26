@@ -9,7 +9,7 @@ tags:
   - file-sync
   - knowledge
 user-invocable: true
-argument-hint: "spaces | whoami | ls/cat/write/upload/mkdir/mv/rm/log/rollback/trash/restore/shortlink/diff | link info | local root | collab cat/write/publish/bridge | comment <subcmd> | share <subcmd>"
+argument-hint: "spaces | whoami | ls/cat/write/upload/mkdir/mv/rm/log/rollback/trash/restore/shortlink/diff | link info | local root | sheet get/set | collab cat/write/publish/bridge | comment <subcmd> | share <subcmd>"
 allowed-tools: Bash(*)
 ---
 
@@ -176,6 +176,30 @@ For collaborative edits that need to write back, always use normal `collab cat` 
 - `collab cat`, `collab write`, and `collab publish` are short-lived commands: they open a WebSocket, finish the operation, then close it automatically.
 - `collab bridge` is long-lived. It opens a realtime room and keeps the WebSocket alive until `close`, stdin EOF, or process exit.
 - There is no CLI-side idle auto-close for bridge. If a test or editor integration needs "edit, wait 10 seconds, then close", the bridge caller must send `close` after waiting.
+
+### Univer Sheet Collaboration
+
+Univer Sheets use a separate OT collaboration path from text-document
+`collab`. Never read or overwrite the `.sheet.json` descriptor as cell data.
+
+```bash
+npx docz-cli@latest sheet get <space>:<path.sheet.json> \
+  --range 'Sheet1!A1:B2' --json
+npx docz-cli@latest sheet set <space>:<path.sheet.json> \
+  --range 'Sheet1!A1:B2' --values-json '[[1,2],[3,4]]' \
+  --request-id '<uuid>' --timeout 30000 --json
+```
+
+- `sheet get` is available to owner/member/viewer with read access.
+- `sheet set` is available to owner/member only. Its values must be a
+  rectangular two-dimensional JSON matrix matching the range.
+- Treat `SYNCED`/exit 0 as confirmed, `FAILED`/exit 1 as definitely not
+  applied, and `UNKNOWN`/exit 2 as possibly applied.
+- On `UNKNOWN`, preserve the request ID and reread the range before any retry.
+  Never blindly replay a Sheet mutation.
+- The CLI confirms a write only after collaboration leaves `SYNCED`, the Univer
+  revision advances, and state returns to `SYNCED`; Git metadata is not the confirmation
+  source.
 
 ### Version Management
 

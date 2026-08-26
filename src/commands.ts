@@ -337,6 +337,7 @@ function printSheetResult(result: SheetCommandResult, json: boolean): void {
     `${result.outcome}: ${result.path} ${result.range} (${result.collaboration_status})`
   );
   if (result.warning) console.error(`Warning: ${result.warning}`);
+  if (result.failure_code) console.error(`Failure: ${result.failure_code}`);
 }
 
 async function confirmSheetOperation(
@@ -350,6 +351,9 @@ async function confirmSheetOperation(
     failureCode?: string;
     deadlineAt: string;
     timeoutMs: number;
+    startRevision?: number;
+    endRevision?: number;
+    revisionVerified?: boolean;
   }
 ): Promise<SheetOutcome> {
   try {
@@ -365,6 +369,9 @@ async function confirmSheetOperation(
       outcome: input.outcome,
       collaborationStatus: input.collaborationStatus,
       failureCode: input.failureCode,
+      startRevision: input.startRevision,
+      endRevision: input.endRevision,
+      revisionVerified: input.revisionVerified,
       signal: sheetRequestSignal(finalizeTimeout),
     });
     return finalized.outcome === 'PENDING' ? 'UNKNOWN' : finalized.outcome;
@@ -474,7 +481,7 @@ export async function executeSheetGet(input: {
       failure_code: classifySheetFailure(error, 'sheet_read_failed'),
     };
   } finally {
-    sheet?.dispose();
+    await sheet?.dispose();
   }
 }
 
@@ -612,7 +619,7 @@ export async function executeSheetSet(input: {
   let interrupted = false;
   const onSignal = () => {
     interrupted = true;
-    sheet?.dispose();
+    void sheet?.dispose();
   };
   process.once('SIGINT', onSignal);
   process.once('SIGTERM', onSignal);
@@ -629,13 +636,16 @@ export async function executeSheetSet(input: {
       operationPhaseTimeout(timeoutMs, operation.deadline_at)
     );
     if (interrupted) throw new Error('interrupted');
+    const startRevision = sheet.revision();
     let mutationApplied = false;
     // Arm collaboration observation before executing the mutation so a fast
     // PENDING -> SYNCED transition cannot be missed. The observer is gated
-    // until the local command has completed, so the initial SYNCED state is
-    // never accepted as confirmation of this write.
+    // from the exact point the command may send a mutation, while completion is
+    // gated until the local command returns. The initial SYNCED state is never
+    // accepted as confirmation of this write.
     const writeSync = sheet.waitForWriteSync(
       operationPhaseTimeout(timeoutMs, operation.deadline_at),
+      () => mutationMayHaveBeenSent,
       () => mutationApplied
     );
     // If the SDK rejects the local write, this observer is intentionally left
@@ -648,18 +658,23 @@ export async function executeSheetSet(input: {
     });
     mutationApplied = true;
     const collaborationStatus = await writeSync;
+    const endRevision = sheet.revision();
+    const revisionVerified = endRevision > startRevision;
     const outcome = await confirmSheetOperation(input.client, {
       spaceId: session.space_id,
       operationId: operation.id,
       requestId,
       outcome: 'SYNCED',
       collaborationStatus,
+      startRevision,
+      endRevision,
+      revisionVerified,
       deadlineAt: operation.deadline_at,
       timeoutMs,
     });
     return {
       outcome,
-      phase: outcome === 'SYNCED' ? 'confirm' : 'confirm',
+      phase: 'confirm',
       space_id: session.space_id,
       path: session.path,
       unit_id: session.unit_id,
@@ -729,7 +744,7 @@ export async function executeSheetSet(input: {
   } finally {
     process.removeListener('SIGINT', onSignal);
     process.removeListener('SIGTERM', onSignal);
-    sheet?.dispose();
+    await sheet?.dispose();
   }
 }
 

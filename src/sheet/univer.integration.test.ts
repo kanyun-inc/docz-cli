@@ -35,9 +35,12 @@ function required(value: string | undefined, name: string): string {
     const marker = `node-e2e-${Date.now()}`;
     try {
       await writer.waitForInitialSync(30_000);
+      const startRevision = writer.revision();
+      let mutationStarted = false;
       let mutationApplied = false;
       const synchronized = writer.waitForWriteSync(
         30_000,
+        () => mutationStarted,
         () => mutationApplied
       );
       void synchronized.catch(() => undefined);
@@ -48,12 +51,15 @@ function required(value: string | undefined, name: string): string {
           [marker, 3014],
           ['integration', 1],
         ],
-        () => undefined
+        () => {
+          mutationStarted = true;
+        }
       );
       mutationApplied = true;
       await expect(synchronized).resolves.toBe('SYNCED');
+      expect(writer.revision()).toBeGreaterThan(startRevision);
     } finally {
-      writer.dispose();
+      await writer.dispose();
     }
 
     const readerSession = await client.getSheetSession(
@@ -74,7 +80,7 @@ function required(value: string | undefined, name: string): string {
         ['integration', 1],
       ]);
     } finally {
-      reader.dispose();
+      await reader.dispose();
     }
   },
   60_000
