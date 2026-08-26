@@ -33,6 +33,7 @@ function operation(outcome: SheetOperation['outcome']): SheetOperation {
     client_version: 'test',
     operation: 'set',
     outcome,
+    execution_allowed: true,
     deadline_at: new Date(Date.now() + 120_000).toISOString(),
   };
 }
@@ -40,7 +41,7 @@ function operation(outcome: SheetOperation['outcome']): SheetOperation {
 function fakeSheet(overrides: Partial<OpenUniverSheet> = {}): OpenUniverSheet {
   return {
     read: vi.fn(() => [[42]]),
-    write: vi.fn(),
+    write: vi.fn((_sheetName, _a1, _values, markMutation) => markMutation?.()),
     status: vi.fn(() => 'SYNCED'),
     waitForInitialSync: vi.fn(async () => 'SYNCED'),
     waitForWriteSync: vi.fn(async () => 'SYNCED'),
@@ -109,8 +110,52 @@ describe('Sheet commands', () => {
     expect(opener).not.toHaveBeenCalled();
   });
 
-  it('reports SYNCED only after SDK synchronization and audit confirmation', async () => {
+  it('does not send a second mutation for a replayed pending request ID', async () => {
     const sheet = fakeSheet();
+    const finalize = vi.fn();
+    const result = await executeSheetSet({
+      client: fakeClient({
+        beginSheetOperation: vi.fn(async () => ({
+          ...operation('PENDING'),
+          execution_allowed: false,
+        })),
+        finalizeSheetOperation: finalize,
+      }),
+      baseUrl: 'https://docz.example.com',
+      token: 'fake-token',
+      spaceId: 'space-1',
+      path: session.path,
+      range: 'Sheet1!A1',
+      valuesJson: '[[1]]',
+      clientVersion: 'test',
+      requestId: 'request-1',
+      opener: vi.fn(async () => sheet),
+    });
+    expect(result).toMatchObject({
+      outcome: 'UNKNOWN',
+      phase: 'confirm',
+      failure_code: 'operation_execution_not_claimed',
+    });
+    expect(result.warning).toContain('no new mutation was sent');
+    expect(sheet.write).not.toHaveBeenCalled();
+    expect(finalize).not.toHaveBeenCalled();
+  });
+
+  it('reports SYNCED only after SDK synchronization and audit confirmation', async () => {
+    const order: string[] = [];
+    const sheet = fakeSheet({
+      write: vi.fn(async (_sheetName, _a1, _values, markMutation) => {
+        order.push('write');
+        markMutation?.();
+      }),
+      waitForWriteSync: vi.fn(async (_timeoutMs, mutationApplied) => {
+        order.push('observe');
+        expect(mutationApplied?.()).toBe(false);
+        while (!mutationApplied?.()) await Promise.resolve();
+        order.push('synced');
+        return 'SYNCED';
+      }),
+    });
     const client = fakeClient();
     const result = await executeSheetSet({
       client,
@@ -125,7 +170,13 @@ describe('Sheet commands', () => {
       opener: vi.fn(async () => sheet),
     });
     expect(result.outcome).toBe('SYNCED');
-    expect(sheet.write).toHaveBeenCalledWith('Sheet1', 'A1', [[1]]);
+    expect(order).toEqual(['observe', 'write', 'synced']);
+    expect(sheet.write).toHaveBeenCalledWith(
+      'Sheet1',
+      'A1',
+      [[1]],
+      expect.any(Function)
+    );
     expect(client.finalizeSheetOperation).toHaveBeenCalledWith(
       expect.objectContaining({ outcome: 'SYNCED', operationId: 'op-1' })
     );
@@ -163,6 +214,92 @@ describe('Sheet commands', () => {
     expect(JSON.stringify(result)).not.toContain('sensitive URL');
   });
 
+  it('keeps an SDK command rejection UNKNOWN because the mutation may precede false', async () => {
+    const sheet = fakeSheet({
+      write: vi.fn(async (_sheetName, _a1, _values, markMutation) => {
+        markMutation?.();
+        throw new Error('Univer rejected the Sheet write command.');
+      }),
+    });
+    const finalize = vi.fn(async () => operation('UNKNOWN'));
+    const result = await executeSheetSet({
+      client: fakeClient({ finalizeSheetOperation: finalize }),
+      baseUrl: 'https://docz.example.com',
+      token: 'fake-token',
+      spaceId: 'space-1',
+      path: session.path,
+      range: 'Sheet1!A1',
+      valuesJson: '[[1]]',
+      clientVersion: 'test',
+      requestId: 'request-1',
+      opener: vi.fn(async () => sheet),
+    });
+    expect(result).toMatchObject({
+      outcome: 'UNKNOWN',
+      phase: 'confirm',
+      failure_code: 'sheet_write_command_rejected',
+    });
+    expect(result.warning).toContain('reread');
+    expect(finalize).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: 'UNKNOWN' })
+    );
+  });
+
+  it('reports a local worksheet lookup failure as FAILED before mutation', async () => {
+    const sheet = fakeSheet({
+      write: vi.fn(async () => {
+        throw new Error('Worksheet "Missing" was not found.');
+      }),
+    });
+    const finalize = vi.fn(async () => operation('FAILED'));
+    const result = await executeSheetSet({
+      client: fakeClient({ finalizeSheetOperation: finalize }),
+      baseUrl: 'https://docz.example.com',
+      token: 'fake-token',
+      spaceId: 'space-1',
+      path: session.path,
+      range: 'Missing!A1',
+      valuesJson: '[[1]]',
+      clientVersion: 'test',
+      requestId: 'request-1',
+      opener: vi.fn(async () => sheet),
+    });
+    expect(result).toMatchObject({
+      outcome: 'FAILED',
+      phase: 'write',
+      failure_code: 'sheet_write_command_failed',
+    });
+    expect(result.warning).toBeUndefined();
+    expect(finalize).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: 'FAILED' })
+    );
+  });
+
+  it('classifies load errors without exposing an upstream credential-bearing message', async () => {
+    const sensitive = 'wss://docz.example.com/comb?token=never-log-this';
+    const result = await executeSheetSet({
+      client: fakeClient({
+        finalizeSheetOperation: vi.fn(async () => operation('FAILED')),
+      }),
+      baseUrl: 'https://docz.example.com',
+      token: 'fake-token',
+      spaceId: 'space-1',
+      path: session.path,
+      range: 'Sheet1!A1',
+      valuesJson: '[[1]]',
+      clientVersion: 'test',
+      requestId: 'request-1',
+      opener: vi.fn(async () => {
+        throw new Error(`WebSocket connection failed: ${sensitive}`);
+      }),
+    });
+    expect(result).toMatchObject({
+      outcome: 'FAILED',
+      failure_code: 'collaboration_unavailable',
+    });
+    expect(JSON.stringify(result)).not.toContain(sensitive);
+  });
+
   it('does not repeat a mutation when request id already has a terminal outcome', async () => {
     const opener = vi.fn();
     const result = await executeSheetSet({
@@ -183,11 +320,14 @@ describe('Sheet commands', () => {
     expect(opener).not.toHaveBeenCalled();
   });
 
-  it('recovers a lost begin response by querying the same request id', async () => {
+  it('does not mutate when a lost begin response is recovered by query', async () => {
     const begin = vi.fn(async () => {
       throw new Error('response lost');
     });
-    const query = vi.fn(async () => operation('PENDING'));
+    const query = vi.fn(async () => ({
+      ...operation('PENDING'),
+      execution_allowed: false,
+    }));
     const sheet = fakeSheet();
     const result = await executeSheetSet({
       client: fakeClient({
@@ -204,13 +344,16 @@ describe('Sheet commands', () => {
       requestId: 'request-1',
       opener: vi.fn(async () => sheet),
     });
-    expect(result.outcome).toBe('SYNCED');
+    expect(result).toMatchObject({
+      outcome: 'UNKNOWN',
+      failure_code: 'operation_execution_not_claimed',
+    });
     expect(query).toHaveBeenCalledWith(
       'space-1',
       'request-1',
       expect.any(AbortSignal)
     );
-    expect(sheet.write).toHaveBeenCalledOnce();
+    expect(sheet.write).not.toHaveBeenCalled();
   });
 
   it('reports a request id and does not mutate when begin cannot be confirmed', async () => {
@@ -317,6 +460,9 @@ describe('Sheet commands', () => {
     });
     expect(openedTimeout).toBeLessThanOrEqual(3_000);
     expect(sheet.waitForInitialSync).toHaveBeenCalledWith(expect.any(Number));
-    expect(sheet.waitForWriteSync).toHaveBeenCalledWith(expect.any(Number));
+    expect(sheet.waitForWriteSync).toHaveBeenCalledWith(
+      expect.any(Number),
+      expect.any(Function)
+    );
   });
 });

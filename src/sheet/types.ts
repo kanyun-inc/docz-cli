@@ -24,6 +24,7 @@ export interface SheetOperation {
   client_version: string;
   operation: 'set';
   outcome: 'PENDING' | SheetOutcome;
+  execution_allowed?: boolean;
   last_collaboration_status?: string;
   failure_code?: string;
   deadline_at: string;
@@ -54,10 +55,18 @@ export interface OpenSheetOptions {
 
 export interface OpenUniverSheet {
   read(sheetName: string, a1: string): unknown[][];
-  write(sheetName: string, a1: string, values: unknown[][]): void;
+  write(
+    sheetName: string,
+    a1: string,
+    values: unknown[][],
+    onMutationMayHaveBeenSent?: () => void
+  ): void | Promise<void>;
   status(): string;
   waitForInitialSync(timeoutMs?: number): Promise<string>;
-  waitForWriteSync(timeoutMs?: number): Promise<string>;
+  waitForWriteSync(
+    timeoutMs?: number,
+    mutationApplied?: () => boolean
+  ): Promise<string>;
   dispose(): void;
 }
 

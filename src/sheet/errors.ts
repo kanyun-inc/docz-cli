@@ -1,0 +1,83 @@
+export type SheetFailureCode =
+  | 'collaboration_timeout'
+  | 'collaboration_unavailable'
+  | 'collaboration_permission_denied'
+  | 'collaboration_conflict'
+  | 'sheet_read_failed'
+  | 'sheet_write_command_rejected'
+  | 'sheet_write_invalid_values'
+  | 'sheet_write_sdk_incompatible'
+  | 'sheet_write_command_failed'
+  | 'initial_load_failed';
+
+/**
+ * Convert an untrusted SDK/network error to a bounded diagnostic code. The
+ * original message is inspected only in memory and must never be returned or
+ * logged because upstream errors can contain URLs or credentials.
+ */
+export function classifySheetFailure(
+  error: unknown,
+  fallback: SheetFailureCode
+): SheetFailureCode {
+  const name = error instanceof Error ? error.name : '';
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === 'string'
+        ? error
+        : '';
+  const signature = `${name} ${message}`.toLowerCase();
+
+  if (/timeout|timed out|aborterror/.test(signature)) {
+    return 'collaboration_timeout';
+  }
+  if (/forbidden|unauthori[sz]ed|permission|\b401\b|\b403\b/.test(signature)) {
+    return 'collaboration_permission_denied';
+  }
+  if (/conflict/.test(signature)) {
+    return 'collaboration_conflict';
+  }
+  if (
+    /offline|network|fetch failed|econn|socket|websocket|connection/.test(
+      signature
+    )
+  ) {
+    return 'collaboration_unavailable';
+  }
+  return fallback;
+}
+
+export function classifySheetWriteFailure(error: unknown): SheetFailureCode {
+  if (error === false) return 'sheet_write_command_rejected';
+  const name = error instanceof Error ? error.name : '';
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === 'string'
+        ? error
+        : '';
+  const signature = `${name} ${message}`.toLowerCase();
+  if (/rejected the sheet write command/.test(signature)) {
+    return 'sheet_write_command_rejected';
+  }
+  if (/invalid value|matrix|dimension|range size/.test(signature)) {
+    return 'sheet_write_invalid_values';
+  }
+  if (
+    /not a function|cannot read|cannot destructure|undefined|null/.test(
+      signature
+    )
+  ) {
+    return 'sheet_write_sdk_incompatible';
+  }
+  if (/not registered|registration/.test(signature)) {
+    return 'sheet_write_sdk_incompatible';
+  }
+  const collaborationFailure = classifySheetFailure(
+    error,
+    'sheet_write_command_failed'
+  );
+  return collaborationFailure === 'sheet_write_command_failed'
+    ? 'sheet_write_command_failed'
+    : collaborationFailure;
+}

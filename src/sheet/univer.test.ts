@@ -1,5 +1,11 @@
+import { CollaborationStatus } from '@univerjs-pro/collaboration-client';
 import { describe, expect, it, vi } from 'vitest';
-import { validateUniverEndpoint, withUniverTimeout } from './univer.js';
+import {
+  closePendingCollaborationSocket,
+  validateUniverEndpoint,
+  waitUntil,
+  withUniverTimeout,
+} from './univer.js';
 
 describe('Univer endpoint validation', () => {
   it('accepts only the same Docz origin', () => {
@@ -38,5 +44,61 @@ describe('Univer load timeout', () => {
     ).resolves.toBe('ready');
     expect(clear).toHaveBeenCalledOnce();
     clear.mockRestore();
+  });
+});
+
+describe('Univer collaboration status wait', () => {
+  it('allows the initial OFFLINE state to progress through a bounded probe', async () => {
+    vi.useFakeTimers();
+    let current = CollaborationStatus.OFFLINE;
+    const dispose = vi.fn();
+    const status = vi.fn(() => current);
+    const waiting = waitUntil(
+      status,
+      (value) => value === CollaborationStatus.SYNCED,
+      1_000,
+      () => ({ dispose })
+    );
+
+    current = CollaborationStatus.SYNCED;
+    await vi.advanceTimersByTimeAsync(25);
+    await expect(waiting).resolves.toBe('SYNCED');
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(status.mock.calls.length).toBeLessThanOrEqual(3);
+    vi.useRealTimers();
+  });
+
+  it('fails when an established session transitions back to OFFLINE', async () => {
+    let listener: ((status: CollaborationStatus) => void) | undefined;
+    const waiting = waitUntil(
+      () => CollaborationStatus.PENDING,
+      (value) => value === CollaborationStatus.SYNCED,
+      1_000,
+      (next) => {
+        listener = next;
+        return { dispose: vi.fn() };
+      }
+    );
+
+    listener?.(CollaborationStatus.PENDING);
+    listener?.(CollaborationStatus.OFFLINE);
+    await expect(waiting).rejects.toThrow('offline');
+  });
+});
+
+describe('Univer Node cleanup', () => {
+  it('closes an in-flight 0.21.1 candidate socket', () => {
+    const close = vi.fn();
+    const unsubscribe = vi.fn();
+    const subscribe = vi.fn(() => ({ unsubscribe }));
+    closePendingCollaborationSocket({
+      _candidateSocket: { close, error$: { subscribe } },
+    });
+    expect(subscribe).toHaveBeenCalledOnce();
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('is safe when no candidate socket exists', () => {
+    expect(() => closePendingCollaborationSocket({})).not.toThrow();
   });
 });

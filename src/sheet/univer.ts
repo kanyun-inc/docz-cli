@@ -1,21 +1,43 @@
 import '@univerjs/sheets/facade';
 import '@univerjs-pro/collaboration-client/facade';
 
-import { LocaleType, LogLevel, Univer } from '@univerjs/core';
+import {
+  covertCellValues,
+  DependentOn,
+  Disposable,
+  IAuthzIoService,
+  ICommandService,
+  IMentionIOService,
+  Injector,
+  IUndoRedoService,
+  LocaleType,
+  LogLevel,
+  Plugin,
+  registerDependencies,
+  setDependencies,
+  Univer,
+} from '@univerjs/core';
 import { FUniver } from '@univerjs/core/facade';
 import { UniverFormulaEnginePlugin } from '@univerjs/engine-formula';
-import { UniverNetworkPlugin } from '@univerjs/network';
-import { UniverSheetsPlugin } from '@univerjs/sheets';
+import {
+  type ISocket,
+  ISocketService,
+  type ISocketService as ISocketServiceContract,
+  UniverNetworkPlugin,
+} from '@univerjs/network';
+import { SetRangeValuesCommand, UniverSheetsPlugin } from '@univerjs/sheets';
+import sheetsEnUS from '@univerjs/sheets/locale/en-US';
 import { UniverCollaborationPlugin } from '@univerjs-pro/collaboration';
 import {
+  CollaborationSessionService,
   CollaborationStatus,
   UniverCollaborationClientPlugin,
 } from '@univerjs-pro/collaboration-client';
-import {
-  NodeCollaborationSocketService,
-  UniverCollaborationClientNodePlugin,
-} from '@univerjs-pro/collaboration-client-node';
+import collaborationEnUS from '@univerjs-pro/collaboration-client/locale/en-US';
+import { NodeCollaborationSocketService } from '@univerjs-pro/collaboration-client-node';
 import { UniverLicensePlugin } from '@univerjs-pro/license';
+import { Observable, share } from 'rxjs';
+import { WebSocket } from 'ws';
 import type { OpenSheetOptions, OpenUniverSheet } from './types.js';
 
 export function validateUniverEndpoint(raw: string, doczBaseUrl: string): URL {
@@ -57,28 +79,183 @@ function websocketPath(endpoint: URL, path: string): string {
   return ws.toString();
 }
 
+function createSheetNodeSocketService(headers: Record<string, string>) {
+  return class SheetNodeSocketService
+    extends Disposable
+    implements ISocketServiceContract
+  {
+    private readonly sockets = new Set<WebSocket>();
+
+    createSocket(url: string): ISocket {
+      const socket = new WebSocket(url, { headers });
+      this.sockets.add(socket);
+      // A CONNECTING socket emits error when it is terminated. Keep one
+      // permanent no-op listener in addition to the observable below so SDK
+      // teardown order can never turn expected cleanup into an uncaught error.
+      const absorbCleanupError = () => {};
+      socket.on('error', absorbCleanupError);
+      socket.once('close', () => {
+        this.sockets.delete(socket);
+        socket.off('error', absorbCleanupError);
+      });
+
+      const observe = (eventName: 'open' | 'close' | 'error' | 'message') =>
+        new Observable<never>((subscriber) => {
+          const listener = (event: unknown) => subscriber.next(event as never);
+          // Univer's collaboration layer consumes browser-compatible event
+          // objects (`message.data`). ws exposes those through EventTarget;
+          // EventEmitter's `message` callback would pass only the raw payload.
+          socket.addEventListener(eventName, listener as never);
+          return () => socket.removeEventListener(eventName, listener as never);
+        }).pipe(share());
+
+      return {
+        URL: url,
+        close: (code?: number, reason?: string) => {
+          if (socket.readyState === WebSocket.CONNECTING) socket.terminate();
+          else if (socket.readyState === WebSocket.OPEN)
+            socket.close(code, reason);
+        },
+        send: (data) => socket.send(data),
+        open$: observe('open'),
+        close$: observe('close'),
+        error$: observe('error'),
+        message$: observe('message'),
+      };
+    }
+
+    override dispose(): void {
+      for (const socket of this.sockets) socket.terminate();
+      this.sockets.clear();
+      super.dispose();
+    }
+  };
+}
+
+function createSheetNodeSocketPlugin(headers: Record<string, string>) {
+  const SheetNodeSocketService = createSheetNodeSocketService(headers);
+  class SheetNodeSocketPlugin extends Plugin {
+    static override pluginName = 'DOCZ_SHEET_NODE_SOCKET_PLUGIN';
+
+    constructor(
+      _config: Record<string, never> | undefined,
+      protected override readonly _injector: Injector
+    ) {
+      super();
+    }
+
+    override onStarting(): void {
+      registerDependencies(this._injector, [
+        [ISocketService, { useClass: SheetNodeSocketService }],
+      ]);
+    }
+  }
+  // Plugin configuration is constructor argument zero; the injector supplies
+  // the remaining argument. This is the non-decorator form supported by Redi.
+  setDependencies(SheetNodeSocketPlugin, [Injector], 1);
+  DependentOn(UniverCollaborationClientPlugin)(SheetNodeSocketPlugin);
+  return SheetNodeSocketPlugin;
+}
+
+// Univer 0.21.1 leaves a not-yet-open candidate socket alive when a session is
+// disposed while connecting. Close this narrow compatibility seam explicitly
+// so a failed CLI command cannot keep the Node.js process alive indefinitely.
+export function closePendingCollaborationSocket(service: unknown): void {
+  const candidate = (
+    service as
+      | {
+          _candidateSocket?: {
+            close?: () => void;
+            error$?: {
+              subscribe: (listener: () => void) => { unsubscribe(): void };
+            };
+          };
+        }
+      | undefined
+  )?._candidateSocket;
+  // ws emits an asynchronous error when close() interrupts CONNECTING. Keep a
+  // short-lived no-op subscriber so that expected cleanup cannot become an
+  // uncaught process-level error after Univer disposes its own subscriptions.
+  const errorSubscription = candidate?.error$?.subscribe(() => {});
+  candidate?.close?.();
+  if (errorSubscription) {
+    const timer = setTimeout(() => errorSubscription.unsubscribe(), 1_000);
+    timer.unref?.();
+  }
+}
+
 function statusName(status: CollaborationStatus): string {
   return String(status).toUpperCase();
 }
 
-async function waitUntil(
+export async function waitUntil(
   status: () => CollaborationStatus,
   predicate: (value: CollaborationStatus, elapsedMs: number) => boolean,
-  timeoutMs: number
+  timeoutMs: number,
+  subscribe: (listener: (value: CollaborationStatus) => void) => {
+    dispose(): void;
+  },
+  recheckAfterMs?: number
 ): Promise<string> {
   const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
-    const current = status();
-    if (predicate(current, Date.now() - started)) return statusName(current);
-    if (current === CollaborationStatus.CONFLICT) {
-      throw new Error('Univer collaboration conflict.');
-    }
-    if (current === CollaborationStatus.OFFLINE) {
-      throw new Error('Univer collaboration is offline.');
-    }
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  throw new Error('Univer collaboration synchronization timed out.');
+  return new Promise<string>((resolve, reject) => {
+    let settled = false;
+    // Univer reports OFFLINE briefly while loadSheetAsync finishes installing
+    // the collaboration session. Treat only a transition back to OFFLINE as a
+    // terminal disconnect; an initial OFFLINE must be allowed to progress.
+    let sawNonOffline = false;
+    let recheckTimer: ReturnType<typeof setTimeout> | undefined;
+    let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+    let subscription: { dispose(): void } | undefined;
+    let recheckDelayMs = recheckAfterMs ?? 25;
+
+    const cleanup = () => {
+      subscription?.dispose();
+      if (recheckTimer) clearTimeout(recheckTimer);
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+    };
+    const finish = (result: string | Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (result instanceof Error) reject(result);
+      else resolve(result);
+    };
+    const evaluate = (current: CollaborationStatus) => {
+      if (settled) return;
+      if (current !== CollaborationStatus.OFFLINE) sawNonOffline = true;
+      if (predicate(current, Date.now() - started)) {
+        finish(statusName(current));
+      } else if (current === CollaborationStatus.CONFLICT) {
+        finish(new Error('Univer collaboration conflict.'));
+      } else if (current === CollaborationStatus.OFFLINE && sawNonOffline) {
+        finish(new Error('Univer collaboration is offline.'));
+      }
+    };
+    const scheduleRecheck = () => {
+      recheckTimer = setTimeout(() => {
+        evaluate(status());
+        if (!settled) {
+          recheckDelayMs = Math.min(recheckDelayMs * 2, 1_000);
+          scheduleRecheck();
+        }
+      }, recheckDelayMs);
+      recheckTimer.unref?.();
+    };
+
+    subscription = subscribe(evaluate);
+    timeoutTimer = setTimeout(
+      () =>
+        finish(new Error('Univer collaboration synchronization timed out.')),
+      timeoutMs
+    );
+    timeoutTimer.unref?.();
+    // The Node collaboration adapter does not emit every status transition in
+    // Univer 0.21.1. Events are the fast path; a bounded exponential probe is
+    // the compatibility fallback and tops out at one check per second.
+    scheduleRecheck();
+    evaluate(status());
+  });
 }
 
 export async function withUniverTimeout<T>(
@@ -112,22 +289,35 @@ export async function openUniverSheet(
     'X-Docz-Client': `docz-cli/${options.clientVersion}`,
     'X-Docz-Sheet-Unit': options.session.unit_id,
   };
+  const SheetNodeSocketPlugin = createSheetNodeSocketPlugin(headers);
   const univer = new Univer({
     locale: LocaleType.EN_US,
+    locales: {
+      [LocaleType.EN_US]: { ...sheetsEnUS, ...collaborationEnUS },
+    },
     logLevel: LogLevel.ERROR,
+    // The collaboration client provides remote-aware implementations for
+    // these core services. Remove the local defaults before plugin startup so
+    // Redi sees exactly one binding for each identifier in Node.js.
+    override: [
+      [IAuthzIoService, null],
+      [IUndoRedoService, null],
+      [IMentionIOService, null],
+    ],
   });
   univer.registerPlugin(UniverNetworkPlugin);
   univer.registerPlugin(UniverFormulaEnginePlugin);
   univer.registerPlugin(UniverSheetsPlugin);
-  univer.registerPlugin(UniverLicensePlugin, {
-    license: process.env.UNIVER_LICENSE || undefined,
-  });
+  const license = process.env.UNIVER_LICENSE?.trim();
+  // The Node collaboration plugin expects the license plugin to be explicitly
+  // registered before it, including in Univer's supported limited evaluation
+  // mode. A commercial license is supplied only when real content is present.
+  univer.registerPlugin(UniverLicensePlugin, license ? { license } : {});
   univer.registerPlugin(UniverCollaborationPlugin);
   univer.registerPlugin(UniverCollaborationClientPlugin, {
     socketService: NodeCollaborationSocketService,
     enableCollaboration: true,
     enableOfflineEditing: false,
-    enableAuthServer: false,
     snapshotServerUrl: endpointPath(endpoint, '/universer-api/snapshot'),
     collabSubmitChangesetUrl: endpointPath(endpoint, '/universer-api/comb'),
     collabWebSocketUrl: websocketPath(endpoint, '/universer-api/comb/connect'),
@@ -139,9 +329,33 @@ export async function openUniverSheet(
     downloadEndpointUrl: endpoint.toString(),
     customHeaders: headers,
   });
-  univer.registerPlugin(UniverCollaborationClientNodePlugin);
-
+  // Keep the official Node collaboration stack, replacing only its low-level
+  // WebSocket transport with an implementation that can terminate CONNECTING
+  // sockets safely when a short-lived CLI process exits.
+  univer.registerPlugin(SheetNodeSocketPlugin, undefined);
   const univerAPI = FUniver.newAPI(univer);
+  let disposed = false;
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    const collaborationSessions = univer
+      .__getInjector()
+      .get(CollaborationSessionService);
+    closePendingCollaborationSocket(collaborationSessions);
+    // ws reports an interrupted CONNECTING socket on nextTick. Keep Univer's
+    // error subscriptions alive through that emission, then finish teardown.
+    setImmediate(() => {
+      collaborationSessions.closeSession(options.session.unit_id);
+      collaborationSessions.dispose();
+      const socketService = univer.__getInjector().get(ISocketService) as {
+        dispose?: () => void;
+      };
+      socketService.dispose?.();
+      univerAPI.disposeUnit(options.session.unit_id);
+      univerAPI.dispose();
+      univer.dispose();
+    });
+  };
   try {
     const collaboration = univerAPI.getCollaboration();
     const workbook = await withUniverTimeout(
@@ -151,43 +365,75 @@ export async function openUniverSheet(
     if (!workbook) throw new Error('Univer Sheet was not found.');
     const currentStatus = () =>
       collaboration.getCollaborationStatus(options.session.unit_id);
+    const subscribeStatus = (listener: (status: CollaborationStatus) => void) =>
+      univerAPI.addEvent(
+        univerAPI.Event.CollaborationStatusChanged,
+        ({ unitId, status }) => {
+          if (unitId === options.session.unit_id) listener(status);
+        }
+      );
 
     const resolveRange = (sheetName: string, a1: string) => {
       const sheet = workbook.getSheetByName(sheetName);
       if (!sheet) throw new Error(`Worksheet "${sheetName}" was not found.`);
       return sheet.getRange(a1);
     };
+    const commandService = univer.__getInjector().get(ICommandService);
 
     return {
       read: (sheetName, a1) => resolveRange(sheetName, a1).getValues(),
-      write: (sheetName, a1, values) => {
-        resolveRange(sheetName, a1).setValues(values as never[][]);
+      write: async (sheetName, a1, values, onMutationMayHaveBeenSent) => {
+        const sheet = workbook.getSheetByName(sheetName);
+        if (!sheet) throw new Error(`Worksheet "${sheetName}" was not found.`);
+        const range = sheet.getRange(a1).getRange();
+        const value = covertCellValues(values as never[][], range);
+        // All local target/range/value preparation is complete. From this
+        // point the command may synchronously execute its primary mutation
+        // before returning false or throwing in a later interceptor.
+        onMutationMayHaveBeenSent?.();
+        const success = await commandService.executeCommand(
+          SetRangeValuesCommand.id,
+          {
+            unitId: workbook.getId(),
+            subUnitId: sheet.getSheetId(),
+            range,
+            value,
+          }
+        );
+        if (!success)
+          throw new Error('Univer rejected the Sheet write command.');
       },
       status: () => statusName(currentStatus()),
       waitForInitialSync: (timeoutMs = 20_000) =>
         waitUntil(
           currentStatus,
           (value) => value === CollaborationStatus.SYNCED,
-          timeoutMs
+          timeoutMs,
+          subscribeStatus
         ),
-      waitForWriteSync: (timeoutMs = 20_000) => {
+      waitForWriteSync: (timeoutMs = 20_000, mutationApplied = () => true) => {
         let sawPending = false;
+        let mutationAppliedAt: number | undefined;
         return waitUntil(
           currentStatus,
-          (value, elapsedMs) => {
+          (value) => {
             if (value !== CollaborationStatus.SYNCED) sawPending = true;
+            if (!mutationApplied()) return false;
+            mutationAppliedAt ??= Date.now();
             return (
               value === CollaborationStatus.SYNCED &&
-              (sawPending || elapsedMs >= 100)
+              (sawPending || Date.now() - mutationAppliedAt >= 100)
             );
           },
-          timeoutMs
+          timeoutMs,
+          subscribeStatus,
+          100
         );
       },
-      dispose: () => univer.dispose(),
+      dispose,
     };
   } catch (error) {
-    univer.dispose();
+    dispose();
     throw error;
   }
 }

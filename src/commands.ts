@@ -22,6 +22,10 @@ import {
 import { type CollabOpenOptions, CollabUnknownError } from './collab/types.js';
 import { getBaseUrl, getConfigPath, getToken, saveConfig } from './config.js';
 import { registerLocalCommands } from './local.js';
+import {
+  classifySheetFailure,
+  classifySheetWriteFailure,
+} from './sheet/errors.js';
 import { parseSheetRange, parseValuesMatrix } from './sheet/range.js';
 import type {
   OpenUniverSheet,
@@ -458,7 +462,7 @@ export async function executeSheetGet(input: {
       range: input.range,
       values: sheet.read(parsed.sheetName, parsed.a1),
     };
-  } catch {
+  } catch (error) {
     return {
       outcome: 'FAILED',
       phase: 'load',
@@ -467,7 +471,7 @@ export async function executeSheetGet(input: {
       unit_id: session.unit_id,
       collaboration_status: sheet?.status() ?? 'UNAVAILABLE',
       range: input.range,
-      failure_code: 'sheet_read_failed',
+      failure_code: classifySheetFailure(error, 'sheet_read_failed'),
     };
   } finally {
     sheet?.dispose();
@@ -586,8 +590,25 @@ export async function executeSheetSet(input: {
         : {}),
     };
   }
+  if (operation.execution_allowed !== true) {
+    return {
+      outcome: 'UNKNOWN',
+      phase: 'confirm',
+      space_id: session.space_id,
+      path: session.path,
+      unit_id: session.unit_id,
+      collaboration_status: 'NOT_STARTED',
+      request_id: requestId,
+      operation_id: operation.id,
+      range: input.range,
+      failure_code: 'operation_execution_not_claimed',
+      warning:
+        'This request ID already exists or its create response was lost; no new mutation was sent. Inspect the operation and reread the range before retrying with a new request ID.',
+    };
+  }
   let sheet: OpenUniverSheet | undefined;
   let mutationMayHaveBeenSent = false;
+  let writeStarted = false;
   let interrupted = false;
   const onSignal = () => {
     interrupted = true;
@@ -608,11 +629,25 @@ export async function executeSheetSet(input: {
       operationPhaseTimeout(timeoutMs, operation.deadline_at)
     );
     if (interrupted) throw new Error('interrupted');
-    mutationMayHaveBeenSent = true;
-    sheet.write(parsed.sheetName, parsed.a1, values);
-    const collaborationStatus = await sheet.waitForWriteSync(
-      operationPhaseTimeout(timeoutMs, operation.deadline_at)
+    let mutationApplied = false;
+    // Arm collaboration observation before executing the mutation so a fast
+    // PENDING -> SYNCED transition cannot be missed. The observer is gated
+    // until the local command has completed, so the initial SYNCED state is
+    // never accepted as confirmation of this write.
+    const writeSync = sheet.waitForWriteSync(
+      operationPhaseTimeout(timeoutMs, operation.deadline_at),
+      () => mutationApplied
     );
+    // If the SDK rejects the local write, this observer is intentionally left
+    // to settle during teardown/timeout. Attach a bounded sink immediately so
+    // that later rejection cannot become an unhandled promise rejection.
+    void writeSync.catch(() => undefined);
+    writeStarted = true;
+    await sheet.write(parsed.sheetName, parsed.a1, values, () => {
+      mutationMayHaveBeenSent = true;
+    });
+    mutationApplied = true;
+    const collaborationStatus = await writeSync;
     const outcome = await confirmSheetOperation(input.client, {
       spaceId: session.space_id,
       operationId: operation.id,
@@ -639,31 +674,43 @@ export async function executeSheetSet(input: {
           }
         : {}),
     };
-  } catch {
-    const requestedOutcome: SheetOutcome = mutationMayHaveBeenSent
+  } catch (error) {
+    const collaborationStatus = sheet?.status() ?? 'UNAVAILABLE';
+    const failureCode = interrupted
+      ? mutationMayHaveBeenSent
+        ? 'interrupted_after_mutation'
+        : 'interrupted_before_mutation'
+      : mutationMayHaveBeenSent
+        ? classifySheetWriteFailure(error)
+        : writeStarted
+          ? classifySheetWriteFailure(error)
+          : classifySheetFailure(error, 'initial_load_failed');
+    // Univer's SetRangeValuesCommand may return false after its primary cell
+    // mutation succeeded but a later interceptor/redo failed. Once write() was
+    // invoked, even an apparently definite command rejection is therefore
+    // conservatively UNKNOWN until a reread proves the resulting values.
+    const mutationOutcomeUnknown = mutationMayHaveBeenSent;
+    const requestedOutcome: SheetOutcome = mutationOutcomeUnknown
       ? 'UNKNOWN'
       : 'FAILED';
-    const collaborationStatus = sheet?.status() ?? 'UNAVAILABLE';
     const outcome = await confirmSheetOperation(input.client, {
       spaceId: session.space_id,
       operationId: operation.id,
       requestId,
       outcome: requestedOutcome,
       collaborationStatus,
-      failureCode: interrupted
-        ? mutationMayHaveBeenSent
-          ? 'interrupted_after_mutation'
-          : 'interrupted_before_mutation'
-        : mutationMayHaveBeenSent
-          ? 'sync_confirmation_lost'
-          : 'initial_load_failed',
+      failureCode,
       deadlineAt: operation.deadline_at,
       timeoutMs,
     });
     return {
       outcome:
-        mutationMayHaveBeenSent && outcome === 'FAILED' ? 'UNKNOWN' : outcome,
-      phase: mutationMayHaveBeenSent ? 'confirm' : 'load',
+        mutationOutcomeUnknown && outcome === 'FAILED' ? 'UNKNOWN' : outcome,
+      phase: mutationOutcomeUnknown
+        ? 'confirm'
+        : writeStarted
+          ? 'write'
+          : 'load',
       space_id: session.space_id,
       path: session.path,
       unit_id: session.unit_id,
@@ -671,10 +718,8 @@ export async function executeSheetSet(input: {
       request_id: requestId,
       operation_id: operation.id,
       range: input.range,
-      failure_code: mutationMayHaveBeenSent
-        ? 'sync_confirmation_lost'
-        : 'initial_load_failed',
-      ...(mutationMayHaveBeenSent
+      failure_code: failureCode,
+      ...(mutationOutcomeUnknown
         ? {
             warning:
               'Write may have been sent; reread the range before retrying.',
