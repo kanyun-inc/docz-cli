@@ -5,6 +5,12 @@
  * 认证：Authorization: Bearer {token}（支持 JWT 和永久 API Token）。
  */
 
+import type {
+  SheetOperation,
+  SheetOutcome,
+  SheetSession,
+} from './sheet/types.js';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -687,6 +693,78 @@ export class DocSyncClient {
 
   async getSharedFileInfo(token: string): Promise<ShareFileInfo> {
     return this.request(`/api/share/${token}/info`);
+  }
+
+  // --- Univer Sheet collaboration ---
+  async getSheetSession(
+    spaceId: string,
+    path: string,
+    signal?: AbortSignal
+  ): Promise<SheetSession> {
+    return this.request(
+      `/api/spaces/${spaceId}/sheets/session?path=${encodeURIComponent(path)}`,
+      { signal }
+    );
+  }
+
+  async beginSheetOperation(input: {
+    spaceId: string;
+    path: string;
+    requestId: string;
+    clientVersion: string;
+    startRevision?: number;
+    signal?: AbortSignal;
+  }): Promise<SheetOperation> {
+    return this.request(`/api/spaces/${input.spaceId}/sheets/operations`, {
+      method: 'POST',
+      signal: input.signal,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        path: input.path,
+        request_id: input.requestId,
+        operation: 'set',
+        client_version: input.clientVersion,
+        start_revision: input.startRevision,
+      }),
+    });
+  }
+
+  async finalizeSheetOperation(input: {
+    spaceId: string;
+    operationId: string;
+    outcome: SheetOutcome;
+    collaborationStatus: string;
+    failureCode?: string;
+    endRevision?: number;
+    revisionVerified?: boolean;
+    signal?: AbortSignal;
+  }): Promise<SheetOperation> {
+    return this.request(
+      `/api/spaces/${input.spaceId}/sheets/operations/${encodeURIComponent(input.operationId)}`,
+      {
+        method: 'PATCH',
+        signal: input.signal,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          outcome: input.outcome,
+          collaboration_status: input.collaborationStatus,
+          failure_code: input.failureCode ?? '',
+          end_revision: input.endRevision,
+          revision_verified: input.revisionVerified ?? false,
+        }),
+      }
+    );
+  }
+
+  async getSheetOperation(
+    spaceId: string,
+    requestId: string,
+    signal?: AbortSignal
+  ): Promise<SheetOperation> {
+    return this.request(
+      `/api/spaces/${spaceId}/sheets/operations/by-request/${encodeURIComponent(requestId)}`,
+      { signal }
+    );
   }
 
   async inspectShareLink(token: string): Promise<ShareLinkInspection> {

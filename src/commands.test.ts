@@ -440,6 +440,25 @@ describe('resolveTarget', () => {
     expect(result.path).toBe('AI-Coding技巧总结-摘要.md');
   });
 
+  it('uses the canonical file-ref Space after a cross-Space move', async () => {
+    server.use(
+      http.get(`${BASE}/api/file-refs/:fileId`, () =>
+        HttpResponse.json({
+          id: 'NNjrcj8c',
+          space_id: 'space-after-move',
+          path: 'moved/Budget.sheet.json',
+        })
+      )
+    );
+    const result = await resolveTarget(client, [
+      'https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c',
+    ]);
+    expect(result).toEqual({
+      spaceId: 'space-after-move',
+      path: 'moved/Budget.sheet.json',
+    });
+  });
+
   it('strips #fragment from fileId in short URL', async () => {
     const result = await resolveTarget(client, [
       'https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c#section-2',

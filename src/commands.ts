@@ -2,6 +2,7 @@
  * CLI Commands
  */
 
+import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename } from 'node:path';
 import type { Command } from 'commander';
@@ -21,12 +22,67 @@ import {
 import { type CollabOpenOptions, CollabUnknownError } from './collab/types.js';
 import { getBaseUrl, getConfigPath, getToken, saveConfig } from './config.js';
 import { registerLocalCommands } from './local.js';
+import { parseSheetRange, parseValuesMatrix } from './sheet/range.js';
+import type {
+  OpenUniverSheet,
+  SheetCommandResult,
+  SheetOpener,
+  SheetOperation,
+  SheetOutcome,
+} from './sheet/types.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 declare const __VERSION__: string;
+
+const DEFAULT_SHEET_PHASE_TIMEOUT_MS = 20_000;
+const MAX_SHEET_PHASE_TIMEOUT_MS = 30_000;
+const SHEET_OPERATION_SAFETY_MS = 5_000;
+
+const lazyOpenUniverSheet: SheetOpener = async (options) => {
+  const { openUniverSheet } = await import('./sheet/univer.js');
+  return openUniverSheet(options);
+};
+
+function normalizeSheetTimeout(timeoutMs?: number): number {
+  const value = timeoutMs ?? DEFAULT_SHEET_PHASE_TIMEOUT_MS;
+  if (!Number.isFinite(value) || value <= 0 || !Number.isInteger(value)) {
+    throw new Error(
+      'Sheet timeout must be a positive integer in milliseconds.'
+    );
+  }
+  if (value > MAX_SHEET_PHASE_TIMEOUT_MS) {
+    throw new Error(
+      `Sheet timeout must not exceed ${MAX_SHEET_PHASE_TIMEOUT_MS}ms.`
+    );
+  }
+  return value;
+}
+
+function operationPhaseTimeout(timeoutMs: number, deadlineAt: string): number {
+  const remaining =
+    Date.parse(deadlineAt) - Date.now() - SHEET_OPERATION_SAFETY_MS;
+  if (!Number.isFinite(remaining) || remaining <= 0) {
+    throw new Error('Sheet operation deadline has expired.');
+  }
+  return Math.max(1, Math.min(timeoutMs, remaining));
+}
+
+function remainingOperationTimeout(
+  timeoutMs: number,
+  deadlineAt: string,
+  reserveMs = 0
+): number {
+  const remaining = Date.parse(deadlineAt) - Date.now() - reserveMs;
+  if (!Number.isFinite(remaining) || remaining <= 0) return 0;
+  return Math.max(1, Math.min(timeoutMs, remaining));
+}
+
+function sheetRequestSignal(timeoutMs: number): AbortSignal {
+  return AbortSignal.timeout(Math.max(1, Math.floor(timeoutMs)));
+}
 
 function getClient(): DocSyncClient {
   const token = getToken();
@@ -215,9 +271,9 @@ async function resolveUrl(
   const fileMatch = pathname.match(/^\/s\/([^/]+)\/f\/([^/]+)$/);
   if (fileMatch) {
     const [, slug, fileId] = fileMatch;
-    const space = await resolveSlug(client, slug);
+    await resolveSlug(client, slug);
     const ref = await client.resolveFileRef(fileId);
-    return { spaceId: space.id, path: ref.path };
+    return { spaceId: ref.space_id, path: ref.path };
   }
 
   // /s/{slug}[/path/to/file]
@@ -258,6 +314,378 @@ export async function resolveTarget(
   const { space, path } = parseTarget(args);
   const s = await client.resolveSpace(space);
   return { spaceId: s.id, path };
+}
+
+function sheetExitCode(outcome: SheetOutcome): 0 | 1 | 2 {
+  if (outcome === 'SYNCED') return 0;
+  return outcome === 'FAILED' ? 1 : 2;
+}
+
+function printSheetResult(result: SheetCommandResult, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify(result));
+    return;
+  }
+  if (result.values) {
+    process.stdout.write(`${JSON.stringify(result.values, null, 2)}\n`);
+  }
+  console.error(
+    `${result.outcome}: ${result.path} ${result.range} (${result.collaboration_status})`
+  );
+  if (result.warning) console.error(`Warning: ${result.warning}`);
+}
+
+async function confirmSheetOperation(
+  client: DocSyncClient,
+  input: {
+    spaceId: string;
+    operationId: string;
+    requestId: string;
+    outcome: SheetOutcome;
+    collaborationStatus: string;
+    failureCode?: string;
+    deadlineAt: string;
+    timeoutMs: number;
+  }
+): Promise<SheetOutcome> {
+  try {
+    const finalizeTimeout = remainingOperationTimeout(
+      Math.min(input.timeoutMs, 5_000),
+      input.deadlineAt,
+      1_000
+    );
+    if (finalizeTimeout === 0) return 'UNKNOWN';
+    const finalized = await client.finalizeSheetOperation({
+      spaceId: input.spaceId,
+      operationId: input.operationId,
+      outcome: input.outcome,
+      collaborationStatus: input.collaborationStatus,
+      failureCode: input.failureCode,
+      signal: sheetRequestSignal(finalizeTimeout),
+    });
+    return finalized.outcome === 'PENDING' ? 'UNKNOWN' : finalized.outcome;
+  } catch {
+    try {
+      const queryTimeout = remainingOperationTimeout(
+        Math.min(input.timeoutMs, 5_000),
+        input.deadlineAt
+      );
+      if (queryTimeout === 0) return 'UNKNOWN';
+      const stored = await client.getSheetOperation(
+        input.spaceId,
+        input.requestId,
+        sheetRequestSignal(queryTimeout)
+      );
+      return stored.outcome === 'PENDING' ? 'UNKNOWN' : stored.outcome;
+    } catch {
+      return 'UNKNOWN';
+    }
+  }
+}
+
+async function beginSheetOperationWithRecovery(
+  client: DocSyncClient,
+  input: {
+    spaceId: string;
+    path: string;
+    requestId: string;
+    clientVersion: string;
+  },
+  timeoutMs: number
+): Promise<SheetOperation | undefined> {
+  const localDeadline = Date.now() + timeoutMs;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const beginTimeout = Math.min(5_000, localDeadline - Date.now());
+    if (beginTimeout <= 0) break;
+    try {
+      return await client.beginSheetOperation({
+        ...input,
+        signal: sheetRequestSignal(beginTimeout),
+      });
+    } catch {
+      const queryTimeout = Math.min(5_000, localDeadline - Date.now());
+      if (queryTimeout <= 0) break;
+      try {
+        return await client.getSheetOperation(
+          input.spaceId,
+          input.requestId,
+          sheetRequestSignal(queryTimeout)
+        );
+      } catch {
+        // The POST may not have reached the server. Retrying the same request ID
+        // is safe and cannot create a second operation.
+      }
+    }
+  }
+  return undefined;
+}
+
+export async function executeSheetGet(input: {
+  client: DocSyncClient;
+  baseUrl: string;
+  token: string;
+  spaceId: string;
+  path: string;
+  range: string;
+  clientVersion: string;
+  timeoutMs?: number;
+  opener?: SheetOpener;
+}): Promise<SheetCommandResult> {
+  const parsed = parseSheetRange(input.range);
+  const timeoutMs = normalizeSheetTimeout(input.timeoutMs);
+  const session = await input.client.getSheetSession(
+    input.spaceId,
+    input.path,
+    sheetRequestSignal(timeoutMs)
+  );
+  let sheet: OpenUniverSheet | undefined;
+  try {
+    sheet = await (input.opener ?? lazyOpenUniverSheet)({
+      session,
+      doczBaseUrl: input.baseUrl,
+      token: input.token,
+      clientVersion: input.clientVersion,
+      timeoutMs,
+    });
+    const collaborationStatus = await sheet.waitForInitialSync(timeoutMs);
+    return {
+      outcome: 'SYNCED',
+      phase: 'read',
+      space_id: session.space_id,
+      path: session.path,
+      unit_id: session.unit_id,
+      collaboration_status: collaborationStatus,
+      range: input.range,
+      values: sheet.read(parsed.sheetName, parsed.a1),
+    };
+  } catch {
+    return {
+      outcome: 'FAILED',
+      phase: 'load',
+      space_id: session.space_id,
+      path: session.path,
+      unit_id: session.unit_id,
+      collaboration_status: sheet?.status() ?? 'UNAVAILABLE',
+      range: input.range,
+      failure_code: 'sheet_read_failed',
+    };
+  } finally {
+    sheet?.dispose();
+  }
+}
+
+export async function executeSheetSet(input: {
+  client: DocSyncClient;
+  baseUrl: string;
+  token: string;
+  spaceId: string;
+  path: string;
+  range: string;
+  valuesJson: string;
+  clientVersion: string;
+  timeoutMs?: number;
+  opener?: SheetOpener;
+  requestId?: string;
+}): Promise<SheetCommandResult> {
+  const parsed = parseSheetRange(input.range);
+  const values = parseValuesMatrix(input.valuesJson, parsed);
+  const timeoutMs = normalizeSheetTimeout(input.timeoutMs);
+  const session = await input.client.getSheetSession(
+    input.spaceId,
+    input.path,
+    sheetRequestSignal(timeoutMs)
+  );
+  if (!session.can_write) {
+    return {
+      outcome: 'FAILED',
+      phase: 'write',
+      space_id: session.space_id,
+      path: session.path,
+      unit_id: session.unit_id,
+      collaboration_status: 'NOT_STARTED',
+      range: input.range,
+      failure_code: 'sheet_write_forbidden',
+    };
+  }
+
+  const requestId = input.requestId ?? randomUUID();
+  const operation = await beginSheetOperationWithRecovery(
+    input.client,
+    {
+      spaceId: session.space_id,
+      path: session.path,
+      requestId,
+      clientVersion: input.clientVersion,
+    },
+    timeoutMs
+  );
+  if (!operation) {
+    return {
+      outcome: 'FAILED',
+      phase: 'load',
+      space_id: session.space_id,
+      path: session.path,
+      unit_id: session.unit_id,
+      collaboration_status: 'NOT_STARTED',
+      request_id: requestId,
+      range: input.range,
+      failure_code: 'operation_begin_unconfirmed',
+      warning:
+        'No sheet mutation was attempted; use the request ID to inspect the audit operation before retrying.',
+    };
+  }
+  if (
+    operation.space_id !== session.space_id ||
+    operation.file_ref_id !== session.file_ref_id ||
+    operation.file_path !== session.path ||
+    operation.unit_id !== session.unit_id
+  ) {
+    if (operation.outcome === 'PENDING') {
+      await confirmSheetOperation(input.client, {
+        spaceId: operation.space_id,
+        operationId: operation.id,
+        requestId,
+        outcome: 'FAILED',
+        collaborationStatus: 'NOT_STARTED',
+        failureCode: 'sheet_identity_changed',
+        deadlineAt: operation.deadline_at,
+        timeoutMs,
+      });
+    }
+    return {
+      outcome: 'FAILED',
+      phase: 'load',
+      space_id: session.space_id,
+      path: session.path,
+      unit_id: session.unit_id,
+      collaboration_status: 'NOT_STARTED',
+      request_id: requestId,
+      operation_id: operation.id,
+      range: input.range,
+      failure_code: 'sheet_identity_changed',
+    };
+  }
+  if (operation.outcome !== 'PENDING') {
+    return {
+      outcome: operation.outcome,
+      phase: 'confirm',
+      space_id: session.space_id,
+      path: session.path,
+      unit_id: session.unit_id,
+      collaboration_status:
+        operation.last_collaboration_status || 'NOT_REOPENED',
+      request_id: requestId,
+      operation_id: operation.id,
+      range: input.range,
+      failure_code: operation.failure_code || undefined,
+      ...(operation.outcome === 'UNKNOWN'
+        ? {
+            warning:
+              'The existing request has an unknown outcome; reread the range before retrying.',
+          }
+        : {}),
+    };
+  }
+  let sheet: OpenUniverSheet | undefined;
+  let mutationMayHaveBeenSent = false;
+  let interrupted = false;
+  const onSignal = () => {
+    interrupted = true;
+    sheet?.dispose();
+  };
+  process.once('SIGINT', onSignal);
+  process.once('SIGTERM', onSignal);
+
+  try {
+    sheet = await (input.opener ?? lazyOpenUniverSheet)({
+      session,
+      doczBaseUrl: input.baseUrl,
+      token: input.token,
+      clientVersion: input.clientVersion,
+      timeoutMs: operationPhaseTimeout(timeoutMs, operation.deadline_at),
+    });
+    await sheet.waitForInitialSync(
+      operationPhaseTimeout(timeoutMs, operation.deadline_at)
+    );
+    if (interrupted) throw new Error('interrupted');
+    mutationMayHaveBeenSent = true;
+    sheet.write(parsed.sheetName, parsed.a1, values);
+    const collaborationStatus = await sheet.waitForWriteSync(
+      operationPhaseTimeout(timeoutMs, operation.deadline_at)
+    );
+    const outcome = await confirmSheetOperation(input.client, {
+      spaceId: session.space_id,
+      operationId: operation.id,
+      requestId,
+      outcome: 'SYNCED',
+      collaborationStatus,
+      deadlineAt: operation.deadline_at,
+      timeoutMs,
+    });
+    return {
+      outcome,
+      phase: outcome === 'SYNCED' ? 'confirm' : 'confirm',
+      space_id: session.space_id,
+      path: session.path,
+      unit_id: session.unit_id,
+      collaboration_status: collaborationStatus,
+      request_id: requestId,
+      operation_id: operation.id,
+      range: input.range,
+      ...(outcome === 'UNKNOWN'
+        ? {
+            warning:
+              'Write confirmation was lost; reread the range before retrying.',
+          }
+        : {}),
+    };
+  } catch {
+    const requestedOutcome: SheetOutcome = mutationMayHaveBeenSent
+      ? 'UNKNOWN'
+      : 'FAILED';
+    const collaborationStatus = sheet?.status() ?? 'UNAVAILABLE';
+    const outcome = await confirmSheetOperation(input.client, {
+      spaceId: session.space_id,
+      operationId: operation.id,
+      requestId,
+      outcome: requestedOutcome,
+      collaborationStatus,
+      failureCode: interrupted
+        ? mutationMayHaveBeenSent
+          ? 'interrupted_after_mutation'
+          : 'interrupted_before_mutation'
+        : mutationMayHaveBeenSent
+          ? 'sync_confirmation_lost'
+          : 'initial_load_failed',
+      deadlineAt: operation.deadline_at,
+      timeoutMs,
+    });
+    return {
+      outcome:
+        mutationMayHaveBeenSent && outcome === 'FAILED' ? 'UNKNOWN' : outcome,
+      phase: mutationMayHaveBeenSent ? 'confirm' : 'load',
+      space_id: session.space_id,
+      path: session.path,
+      unit_id: session.unit_id,
+      collaboration_status: collaborationStatus,
+      request_id: requestId,
+      operation_id: operation.id,
+      range: input.range,
+      failure_code: mutationMayHaveBeenSent
+        ? 'sync_confirmation_lost'
+        : 'initial_load_failed',
+      ...(mutationMayHaveBeenSent
+        ? {
+            warning:
+              'Write may have been sent; reread the range before retrying.',
+          }
+        : {}),
+    };
+  } finally {
+    process.removeListener('SIGINT', onSignal);
+    process.removeListener('SIGTERM', onSignal);
+    sheet?.dispose();
+  }
 }
 
 /**
@@ -1286,6 +1714,102 @@ export function registerCommands(program: Command): void {
       const ref = await client.getFileRef(spaceId, path);
       console.log(ref.url);
     });
+
+  // --- Univer Sheet collaboration ---
+  const sheet = program
+    .command('sheet')
+    .description('Read and write live Univer Sheet ranges');
+
+  sheet
+    .command('get')
+    .description(
+      'Read a live Sheet range — docz sheet get <target> --range Sheet1!A1:B2'
+    )
+    .argument('<target>', 'space:path or short URL')
+    .requiredOption(
+      '--range <range>',
+      'Absolute Sheet range, e.g. Sheet1!A1:B2'
+    )
+    .option('--json', 'Output machine-readable JSON')
+    .option(
+      '--timeout <ms>',
+      'Per-phase timeout in milliseconds (max 30000)',
+      Number
+    )
+    .action(
+      async (
+        target: string,
+        opts: { range: string; json?: boolean; timeout?: number }
+      ) => {
+        const client = getClient();
+        const { spaceId, path } = await resolveTarget(client, [target]);
+        if (!path) throw new Error('Sheet file path is required.');
+        const result = await executeSheetGet({
+          client,
+          baseUrl: getBaseUrl(),
+          token: getRequiredToken(),
+          spaceId,
+          path,
+          range: opts.range,
+          clientVersion: __VERSION__,
+          timeoutMs: opts.timeout,
+        });
+        printSheetResult(result, Boolean(opts.json));
+        process.exitCode = sheetExitCode(result.outcome);
+      }
+    );
+
+  sheet
+    .command('set')
+    .description(
+      'Write a live Sheet range — docz sheet set <target> --range Sheet1!A1:B2 --values-json ...'
+    )
+    .argument('<target>', 'space:path or short URL')
+    .requiredOption(
+      '--range <range>',
+      'Absolute Sheet range, e.g. Sheet1!A1:B2'
+    )
+    .requiredOption('--values-json <json>', 'Two-dimensional JSON value matrix')
+    .option(
+      '--request-id <uuid>',
+      'Stable request id for safe command reconciliation'
+    )
+    .option('--json', 'Output machine-readable JSON')
+    .option(
+      '--timeout <ms>',
+      'Per-phase timeout in milliseconds (max 30000)',
+      Number
+    )
+    .action(
+      async (
+        target: string,
+        opts: {
+          range: string;
+          valuesJson: string;
+          requestId?: string;
+          json?: boolean;
+          timeout?: number;
+        }
+      ) => {
+        const client = getClient();
+        const { spaceId, path } = await resolveTarget(client, [target]);
+        if (!path) throw new Error('Sheet file path is required.');
+        const result = await executeSheetSet({
+          client,
+          baseUrl: getBaseUrl(),
+          token: getRequiredToken(),
+          spaceId,
+          path,
+          range: opts.range,
+          valuesJson: opts.valuesJson,
+          clientVersion: __VERSION__,
+          timeoutMs: opts.timeout,
+          requestId: opts.requestId,
+        });
+        printSheetResult(result, Boolean(opts.json));
+        process.exitCode = sheetExitCode(result.outcome);
+      }
+    );
 
   // --- collaborative editing ---
   const collab = program
