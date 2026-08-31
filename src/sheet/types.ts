@@ -52,6 +52,31 @@ export interface SheetCommandResult {
   warning?: string;
 }
 
+/**
+ * A stable machine result for failures before a canonical Sheet session is
+ * available. No Univer mutation can have been sent in this phase, so the
+ * outcome is always the definite FAILED state. Empty space/path values mean
+ * target resolution did not complete; unit_id is null until Docz has resolved
+ * the canonical Sheet identity.
+ */
+export interface SheetPreflightFailureResult {
+  outcome: 'FAILED';
+  phase: 'validate' | 'load';
+  space_id: string;
+  path: string;
+  unit_id: null;
+  identity_resolved: false;
+  collaboration_status: 'NOT_STARTED';
+  request_id?: string;
+  operation_id?: never;
+  range: string;
+  values?: never;
+  failure_code: SheetFailureCode;
+  warning?: string;
+}
+
+export type SheetCLIResult = SheetCommandResult | SheetPreflightFailureResult;
+
 export interface OpenSheetOptions {
   session: SheetSession;
   doczBaseUrl: string;

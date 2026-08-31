@@ -135,6 +135,61 @@ describe('Sheet commands', () => {
     expect(JSON.stringify(result)).not.toContain(sensitive);
   });
 
+  it('returns a structured preflight failure for an invalid range', async () => {
+    const client = fakeClient();
+    const result = await executeSheetGet({
+      client,
+      baseUrl: 'https://docz.example.com',
+      token: 'fake-token',
+      spaceId: 'space-1',
+      path: session.path,
+      range: 'not-a-range',
+      clientVersion: 'test',
+    });
+    expect(result).toEqual({
+      outcome: 'FAILED',
+      phase: 'validate',
+      space_id: 'space-1',
+      path: session.path,
+      unit_id: null,
+      identity_resolved: false,
+      collaboration_status: 'NOT_STARTED',
+      request_id: undefined,
+      range: 'not-a-range',
+      failure_code: 'sheet_range_invalid',
+      warning: undefined,
+    });
+    expect(client.getSheetSession).not.toHaveBeenCalled();
+  });
+
+  it('returns a bounded preflight failure when session authorization fails', async () => {
+    const sensitive = 'sessionTicket=never-log';
+    const result = await executeSheetSet({
+      client: fakeClient({
+        getSheetSession: vi.fn(async () => {
+          throw new DocSyncHTTPError(403, 'Forbidden', sensitive);
+        }),
+      }),
+      baseUrl: 'https://docz.example.com',
+      token: 'fake-token',
+      spaceId: 'space-1',
+      path: session.path,
+      range: 'Sheet1!A1',
+      valuesJson: '[[1]]',
+      clientVersion: 'test',
+      requestId: 'request-preflight',
+    });
+    expect(result).toMatchObject({
+      outcome: 'FAILED',
+      phase: 'load',
+      unit_id: null,
+      identity_resolved: false,
+      request_id: 'request-preflight',
+      failure_code: 'collaboration_permission_denied',
+    });
+    expect(JSON.stringify(result)).not.toContain(sensitive);
+  });
+
   it('rejects viewer writes before audit or mutation', async () => {
     const begin = vi.fn();
     const opener = vi.fn();
@@ -388,7 +443,9 @@ describe('Sheet commands', () => {
       client: fakeClient({
         beginSheetOperation: vi.fn(async () => ({
           ...operation('SYNCED'),
+          space_id: 'space-old',
           file_ref_id: 'ref-old',
+          file_path: 'Archived/Budget.sheet.json',
           unit_id: 'unit-old',
           execution_allowed: false,
         })),
@@ -404,7 +461,14 @@ describe('Sheet commands', () => {
       requestId: 'request-1',
       opener,
     });
-    expect(result.outcome).toBe('SYNCED');
+    expect(result).toMatchObject({
+      outcome: 'SYNCED',
+      space_id: 'space-old',
+      path: 'Archived/Budget.sheet.json',
+      unit_id: 'unit-old',
+    });
+    expect(result.warning).toContain('historical request');
+    expect(result.warning).toContain('no mutation was sent');
     expect(opener).not.toHaveBeenCalled();
     expect(finalize).not.toHaveBeenCalled();
   });
@@ -577,21 +641,26 @@ describe('Sheet commands', () => {
     );
   });
 
-  it('rejects a phase timeout above the operation safety cap', async () => {
-    await expect(
-      executeSheetSet({
-        client: fakeClient(),
-        baseUrl: 'https://docz.example.com',
-        token: 'fake-token',
-        spaceId: 'space-1',
-        path: session.path,
-        range: 'Sheet1!A1',
-        valuesJson: '[[1]]',
-        clientVersion: 'test',
-        timeoutMs: 30_001,
-        opener: vi.fn(),
-      })
-    ).rejects.toThrow('must not exceed 30000ms');
+  it('returns a structured validation failure above the timeout cap', async () => {
+    const result = await executeSheetSet({
+      client: fakeClient(),
+      baseUrl: 'https://docz.example.com',
+      token: 'fake-token',
+      spaceId: 'space-1',
+      path: session.path,
+      range: 'Sheet1!A1',
+      valuesJson: '[[1]]',
+      clientVersion: 'test',
+      timeoutMs: 30_001,
+      opener: vi.fn(),
+    });
+    expect(result).toMatchObject({
+      outcome: 'FAILED',
+      phase: 'validate',
+      unit_id: null,
+      identity_resolved: false,
+      failure_code: 'sheet_timeout_invalid',
+    });
   });
 
   it('caps every write phase to the remaining server deadline', async () => {

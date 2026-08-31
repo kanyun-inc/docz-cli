@@ -1,4 +1,8 @@
 export type SheetFailureCode =
+  | 'authentication_required'
+  | 'sheet_target_invalid'
+  | 'sheet_path_required'
+  | 'sheet_timeout_invalid'
   | 'collaboration_timeout'
   | 'collaboration_unavailable'
   | 'collaboration_permission_denied'

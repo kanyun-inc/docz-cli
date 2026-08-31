@@ -31,10 +31,12 @@ import {
 import { parseSheetRange, parseValuesMatrix } from './sheet/range.js';
 import type {
   OpenUniverSheet,
-  SheetCommandResult,
+  SheetCLIResult,
   SheetOpener,
   SheetOperation,
   SheetOutcome,
+  SheetPreflightFailureResult,
+  SheetSession,
 } from './sheet/types.js';
 
 // ---------------------------------------------------------------------------
@@ -327,7 +329,7 @@ function sheetExitCode(outcome: SheetOutcome): 0 | 1 | 2 {
   return outcome === 'FAILED' ? 1 : 2;
 }
 
-function printSheetResult(result: SheetCommandResult, json: boolean): void {
+function printSheetResult(result: SheetCLIResult, json: boolean): void {
   if (json) {
     console.log(JSON.stringify(result));
     return;
@@ -340,6 +342,124 @@ function printSheetResult(result: SheetCommandResult, json: boolean): void {
   );
   if (result.warning) console.error(`Warning: ${result.warning}`);
   if (result.failure_code) console.error(`Failure: ${result.failure_code}`);
+}
+
+function finishSheetCommand(result: SheetCLIResult, json: boolean): void {
+  printSheetResult(result, json);
+  process.exitCode = sheetExitCode(result.outcome);
+}
+
+function sheetPreflightFailure(input: {
+  phase: 'validate' | 'load';
+  spaceId?: string;
+  path?: string;
+  range?: string;
+  requestId?: string;
+  failureCode: SheetFailureCode;
+  warning?: string;
+}): SheetPreflightFailureResult {
+  return {
+    outcome: 'FAILED',
+    phase: input.phase,
+    space_id: input.spaceId ?? '',
+    path: input.path ?? '',
+    unit_id: null,
+    identity_resolved: false,
+    collaboration_status: 'NOT_STARTED',
+    request_id: input.requestId,
+    range: input.range ?? '',
+    failure_code: input.failureCode,
+    warning: input.warning,
+  };
+}
+
+function classifySheetLoadFailure(error: unknown): SheetFailureCode {
+  if (error instanceof DocSyncHTTPError) {
+    if (error.status === 401 || error.status === 403) {
+      return 'collaboration_permission_denied';
+    }
+    if (error.status === 409) return 'collaboration_conflict';
+    if (error.status === 429 || error.status >= 500) {
+      return 'collaboration_unavailable';
+    }
+  }
+  return classifySheetFailure(error, 'initial_load_failed');
+}
+
+type PreparedSheetCommand = {
+  client: DocSyncClient;
+  token: string;
+  spaceId: string;
+  path: string;
+};
+
+async function prepareSheetCommand(input: {
+  target?: string;
+  range?: string;
+  requestId?: string;
+  requireValues?: boolean;
+  valuesJson?: string;
+}): Promise<PreparedSheetCommand | SheetPreflightFailureResult> {
+  if (!input.target) {
+    return sheetPreflightFailure({
+      phase: 'validate',
+      range: input.range,
+      requestId: input.requestId,
+      failureCode: 'sheet_target_invalid',
+    });
+  }
+  if (!input.range) {
+    return sheetPreflightFailure({
+      phase: 'validate',
+      requestId: input.requestId,
+      failureCode: 'sheet_range_invalid',
+    });
+  }
+  if (input.requireValues && input.valuesJson === undefined) {
+    return sheetPreflightFailure({
+      phase: 'validate',
+      range: input.range,
+      requestId: input.requestId,
+      failureCode: 'sheet_write_invalid_values',
+    });
+  }
+
+  const token = getToken();
+  if (!token) {
+    return sheetPreflightFailure({
+      phase: 'load',
+      range: input.range,
+      requestId: input.requestId,
+      failureCode: 'authentication_required',
+    });
+  }
+
+  const client = new DocSyncClient(getBaseUrl(), token);
+  try {
+    const { spaceId, path } = await resolveTarget(client, [input.target]);
+    if (!path) {
+      return sheetPreflightFailure({
+        phase: 'validate',
+        spaceId,
+        path,
+        range: input.range,
+        requestId: input.requestId,
+        failureCode: 'sheet_path_required',
+      });
+    }
+    return { client, token, spaceId, path };
+  } catch (error) {
+    const failureCode = classifySheetLoadFailure(error);
+    return sheetPreflightFailure({
+      phase: 'load',
+      range: input.range,
+      requestId: input.requestId,
+      failureCode:
+        failureCode === 'initial_load_failed'
+          ? 'sheet_target_invalid'
+          : failureCode,
+    });
+  }
 }
 
 async function confirmSheetOperation(
@@ -449,14 +569,47 @@ export async function executeSheetGet(input: {
   clientVersion: string;
   timeoutMs?: number;
   opener?: SheetOpener;
-}): Promise<SheetCommandResult> {
-  const parsed = parseSheetRange(input.range);
-  const timeoutMs = normalizeSheetTimeout(input.timeoutMs);
-  const session = await input.client.getSheetSession(
-    input.spaceId,
-    input.path,
-    sheetRequestSignal(timeoutMs)
-  );
+}): Promise<SheetCLIResult> {
+  let parsed: ReturnType<typeof parseSheetRange>;
+  let timeoutMs: number;
+  try {
+    parsed = parseSheetRange(input.range);
+  } catch {
+    return sheetPreflightFailure({
+      phase: 'validate',
+      spaceId: input.spaceId,
+      path: input.path,
+      range: input.range,
+      failureCode: 'sheet_range_invalid',
+    });
+  }
+  try {
+    timeoutMs = normalizeSheetTimeout(input.timeoutMs);
+  } catch {
+    return sheetPreflightFailure({
+      phase: 'validate',
+      spaceId: input.spaceId,
+      path: input.path,
+      range: input.range,
+      failureCode: 'sheet_timeout_invalid',
+    });
+  }
+  let session: SheetSession;
+  try {
+    session = await input.client.getSheetSession(
+      input.spaceId,
+      input.path,
+      sheetRequestSignal(timeoutMs)
+    );
+  } catch (error) {
+    return sheetPreflightFailure({
+      phase: 'load',
+      spaceId: input.spaceId,
+      path: input.path,
+      range: input.range,
+      failureCode: classifySheetLoadFailure(error),
+    });
+  }
   let sheet: OpenUniverSheet | undefined;
   let readStarted = false;
   try {
@@ -507,15 +660,63 @@ export async function executeSheetSet(input: {
   timeoutMs?: number;
   opener?: SheetOpener;
   requestId?: string;
-}): Promise<SheetCommandResult> {
-  const parsed = parseSheetRange(input.range);
-  const values = parseValuesMatrix(input.valuesJson, parsed);
-  const timeoutMs = normalizeSheetTimeout(input.timeoutMs);
-  const session = await input.client.getSheetSession(
-    input.spaceId,
-    input.path,
-    sheetRequestSignal(timeoutMs)
-  );
+}): Promise<SheetCLIResult> {
+  let parsed: ReturnType<typeof parseSheetRange>;
+  try {
+    parsed = parseSheetRange(input.range);
+  } catch {
+    return sheetPreflightFailure({
+      phase: 'validate',
+      spaceId: input.spaceId,
+      path: input.path,
+      range: input.range,
+      requestId: input.requestId,
+      failureCode: 'sheet_range_invalid',
+    });
+  }
+  let values: ReturnType<typeof parseValuesMatrix>;
+  try {
+    values = parseValuesMatrix(input.valuesJson, parsed);
+  } catch {
+    return sheetPreflightFailure({
+      phase: 'validate',
+      spaceId: input.spaceId,
+      path: input.path,
+      range: input.range,
+      requestId: input.requestId,
+      failureCode: 'sheet_write_invalid_values',
+    });
+  }
+  let timeoutMs: number;
+  try {
+    timeoutMs = normalizeSheetTimeout(input.timeoutMs);
+  } catch {
+    return sheetPreflightFailure({
+      phase: 'validate',
+      spaceId: input.spaceId,
+      path: input.path,
+      range: input.range,
+      requestId: input.requestId,
+      failureCode: 'sheet_timeout_invalid',
+    });
+  }
+  let session: SheetSession;
+  try {
+    session = await input.client.getSheetSession(
+      input.spaceId,
+      input.path,
+      sheetRequestSignal(timeoutMs)
+    );
+  } catch (error) {
+    return sheetPreflightFailure({
+      phase: 'load',
+      spaceId: input.spaceId,
+      path: input.path,
+      range: input.range,
+      requestId: input.requestId,
+      failureCode: classifySheetLoadFailure(error),
+    });
+  }
   if (!session.can_write) {
     return {
       outcome: 'FAILED',
@@ -571,24 +772,37 @@ export async function executeSheetSet(input: {
     };
   }
   if (operation.outcome !== 'PENDING') {
+    const identityChanged =
+      operation.space_id !== session.space_id ||
+      operation.file_ref_id !== session.file_ref_id ||
+      operation.file_path !== session.path ||
+      operation.unit_id !== session.unit_id;
+    const warnings = [
+      'This outcome belongs to an existing request ID; no new mutation was sent.',
+    ];
+    if (operation.outcome === 'UNKNOWN') {
+      warnings.push(
+        'The existing request has an unknown outcome; reread the range before retrying.'
+      );
+    }
+    if (identityChanged) {
+      warnings.push(
+        'This historical request belongs to an earlier Sheet identity; no mutation was sent to the Sheet currently at this path.'
+      );
+    }
     return {
       outcome: operation.outcome,
       phase: 'confirm',
-      space_id: session.space_id,
-      path: session.path,
-      unit_id: session.unit_id,
+      space_id: operation.space_id,
+      path: operation.file_path,
+      unit_id: operation.unit_id,
       collaboration_status:
         operation.last_collaboration_status || 'NOT_REOPENED',
       request_id: requestId,
       operation_id: operation.id,
       range: input.range,
       failure_code: operation.failure_code || undefined,
-      ...(operation.outcome === 'UNKNOWN'
-        ? {
-            warning:
-              'The existing request has an unknown outcome; reread the range before retrying.',
-          }
-        : {}),
+      warning: warnings.length > 0 ? warnings.join(' ') : undefined,
     };
   }
   if (
@@ -1813,11 +2027,8 @@ export function registerCommands(program: Command): void {
     .description(
       'Read a live Sheet range — docz sheet get <target> --range Sheet1!A1:B2'
     )
-    .argument('<target>', 'space:path or short URL')
-    .requiredOption(
-      '--range <range>',
-      'Absolute Sheet range, e.g. Sheet1!A1:B2'
-    )
+    .argument('[target]', 'space:path or short URL')
+    .option('--range <range>', 'Absolute Sheet range, e.g. Sheet1!A1:B2')
     .option('--json', 'Output machine-readable JSON')
     .option(
       '--timeout <ms>',
@@ -1826,24 +2037,28 @@ export function registerCommands(program: Command): void {
     )
     .action(
       async (
-        target: string,
-        opts: { range: string; json?: boolean; timeout?: number }
+        target: string | undefined,
+        opts: { range?: string; json?: boolean; timeout?: number }
       ) => {
-        const client = getClient();
-        const { spaceId, path } = await resolveTarget(client, [target]);
-        if (!path) throw new Error('Sheet file path is required.');
-        const result = await executeSheetGet({
-          client,
-          baseUrl: getBaseUrl(),
-          token: getRequiredToken(),
-          spaceId,
-          path,
+        const prepared = await prepareSheetCommand({
+          target,
           range: opts.range,
+        });
+        if ('outcome' in prepared) {
+          finishSheetCommand(prepared, Boolean(opts.json));
+          return;
+        }
+        const result = await executeSheetGet({
+          client: prepared.client,
+          baseUrl: getBaseUrl(),
+          token: prepared.token,
+          spaceId: prepared.spaceId,
+          path: prepared.path,
+          range: opts.range ?? '',
           clientVersion: __VERSION__,
           timeoutMs: opts.timeout,
         });
-        printSheetResult(result, Boolean(opts.json));
-        process.exitCode = sheetExitCode(result.outcome);
+        finishSheetCommand(result, Boolean(opts.json));
       }
     );
 
@@ -1852,12 +2067,9 @@ export function registerCommands(program: Command): void {
     .description(
       'Write a live Sheet range — docz sheet set <target> --range Sheet1!A1:B2 --values-json ...'
     )
-    .argument('<target>', 'space:path or short URL')
-    .requiredOption(
-      '--range <range>',
-      'Absolute Sheet range, e.g. Sheet1!A1:B2'
-    )
-    .requiredOption('--values-json <json>', 'Two-dimensional JSON value matrix')
+    .argument('[target]', 'space:path or short URL')
+    .option('--range <range>', 'Absolute Sheet range, e.g. Sheet1!A1:B2')
+    .option('--values-json <json>', 'Two-dimensional JSON value matrix')
     .option(
       '--request-id <uuid>',
       'Stable request id for safe command reconciliation'
@@ -1870,32 +2082,39 @@ export function registerCommands(program: Command): void {
     )
     .action(
       async (
-        target: string,
+        target: string | undefined,
         opts: {
-          range: string;
-          valuesJson: string;
+          range?: string;
+          valuesJson?: string;
           requestId?: string;
           json?: boolean;
           timeout?: number;
         }
       ) => {
-        const client = getClient();
-        const { spaceId, path } = await resolveTarget(client, [target]);
-        if (!path) throw new Error('Sheet file path is required.');
-        const result = await executeSheetSet({
-          client,
-          baseUrl: getBaseUrl(),
-          token: getRequiredToken(),
-          spaceId,
-          path,
+        const prepared = await prepareSheetCommand({
+          target,
           range: opts.range,
+          requestId: opts.requestId,
+          requireValues: true,
           valuesJson: opts.valuesJson,
+        });
+        if ('outcome' in prepared) {
+          finishSheetCommand(prepared, Boolean(opts.json));
+          return;
+        }
+        const result = await executeSheetSet({
+          client: prepared.client,
+          baseUrl: getBaseUrl(),
+          token: prepared.token,
+          spaceId: prepared.spaceId,
+          path: prepared.path,
+          range: opts.range ?? '',
+          valuesJson: opts.valuesJson ?? '',
           clientVersion: __VERSION__,
           timeoutMs: opts.timeout,
           requestId: opts.requestId,
         });
-        printSheetResult(result, Boolean(opts.json));
-        process.exitCode = sheetExitCode(result.outcome);
+        finishSheetCommand(result, Boolean(opts.json));
       }
     );
 
