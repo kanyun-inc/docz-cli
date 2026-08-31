@@ -1,12 +1,20 @@
+import { LogLevel } from '@univerjs/core';
 import { CollaborationStatus } from '@univerjs-pro/collaboration-client';
 import { describe, expect, it, vi } from 'vitest';
 import {
   closePendingCollaborationSocket,
   runDeferredCleanup,
+  SHEET_UNIVER_LOG_LEVEL,
   validateUniverEndpoint,
   waitUntil,
   withUniverTimeout,
 } from './univer.js';
+
+describe('Univer logging', () => {
+  it('keeps vendor transport logs disabled to protect credentials', () => {
+    expect(SHEET_UNIVER_LOG_LEVEL).toBe(LogLevel.SILENT);
+  });
+});
 
 describe('Univer endpoint validation', () => {
   it('accepts only the same Docz origin', () => {

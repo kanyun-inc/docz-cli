@@ -43,6 +43,11 @@ import { Observable, share } from 'rxjs';
 import { WebSocket } from 'ws';
 import type { OpenSheetOptions, OpenUniverSheet } from './types.js';
 
+// Univer may serialize transport internals (including request headers) when it
+// logs collaboration failures. The CLI already reports bounded failure codes,
+// so vendor logging must stay disabled to avoid credential disclosure.
+export const SHEET_UNIVER_LOG_LEVEL = LogLevel.SILENT;
+
 export function validateUniverEndpoint(raw: string, doczBaseUrl: string): URL {
   let endpoint: URL;
   try {
@@ -320,7 +325,7 @@ export async function openUniverSheet(
     locales: {
       [LocaleType.EN_US]: { ...sheetsEnUS, ...collaborationEnUS },
     },
-    logLevel: LogLevel.ERROR,
+    logLevel: SHEET_UNIVER_LOG_LEVEL,
     // The collaboration client provides remote-aware implementations for
     // these core services. Remove the local defaults before plugin startup so
     // Redi sees exactly one binding for each identifier in Node.js.
