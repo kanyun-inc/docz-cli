@@ -244,6 +244,17 @@ export class ConflictError extends Error {
   }
 }
 
+export class DocSyncHTTPError extends Error {
+  constructor(
+    public readonly status: number,
+    statusText: string,
+    body: string
+  ) {
+    super(`${status} ${statusText}: ${body}`.trim());
+    this.name = 'DocSyncHTTPError';
+  }
+}
+
 export interface MoveErrorDetail {
   error: string;
   message: string;
@@ -296,7 +307,7 @@ export class DocSyncClient {
 
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      throw new Error(`${res.status} ${res.statusText}: ${body}`.trim());
+      throw new DocSyncHTTPError(res.status, res.statusText, body);
     }
 
     const ct = res.headers.get('content-type') ?? '';
@@ -315,7 +326,7 @@ export class DocSyncClient {
 
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      throw new Error(`${res.status} ${res.statusText}: ${body}`.trim());
+      throw new DocSyncHTTPError(res.status, res.statusText, body);
     }
 
     return res.text();

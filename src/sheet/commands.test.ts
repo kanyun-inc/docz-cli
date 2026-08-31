@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { DocSyncClient } from '../client.js';
+import { type DocSyncClient, DocSyncHTTPError } from '../client.js';
 import { executeSheetGet, executeSheetSet } from '../commands.js';
 import type {
   OpenSheetOptions,
@@ -415,6 +415,78 @@ describe('Sheet commands', () => {
       expect.any(AbortSignal)
     );
     expect(sheet.write).not.toHaveBeenCalled();
+  });
+
+  it('does not query or finalize another operation after a request id conflict', async () => {
+    const query = vi.fn(async () => ({
+      ...operation('PENDING'),
+      file_path: 'Other.sheet.json',
+      file_ref_id: 'ref-other',
+      unit_id: 'unit-other',
+      execution_allowed: false,
+    }));
+    const finalize = vi.fn();
+    const opener = vi.fn();
+    const result = await executeSheetSet({
+      client: fakeClient({
+        beginSheetOperation: vi.fn(async () => {
+          throw new DocSyncHTTPError(409, 'Conflict', 'request_id_conflict');
+        }),
+        getSheetOperation: query,
+        finalizeSheetOperation: finalize,
+      }),
+      baseUrl: 'https://docz.example.com',
+      token: 'fake-token',
+      spaceId: 'space-1',
+      path: session.path,
+      range: 'Sheet1!A1',
+      valuesJson: '[[1]]',
+      clientVersion: 'test',
+      requestId: 'shared-request-id',
+      opener,
+    });
+    expect(result).toMatchObject({
+      outcome: 'FAILED',
+      failure_code: 'collaboration_conflict',
+    });
+    expect(query).not.toHaveBeenCalled();
+    expect(finalize).not.toHaveBeenCalled();
+    expect(opener).not.toHaveBeenCalled();
+  });
+
+  it('never finalizes a recovered identity mismatch without execution ownership', async () => {
+    const finalize = vi.fn();
+    const opener = vi.fn();
+    const result = await executeSheetSet({
+      client: fakeClient({
+        beginSheetOperation: vi.fn(async () => {
+          throw new Error('response lost');
+        }),
+        getSheetOperation: vi.fn(async () => ({
+          ...operation('PENDING'),
+          file_path: 'Other.sheet.json',
+          file_ref_id: 'ref-other',
+          unit_id: 'unit-other',
+          execution_allowed: false,
+        })),
+        finalizeSheetOperation: finalize,
+      }),
+      baseUrl: 'https://docz.example.com',
+      token: 'fake-token',
+      spaceId: 'space-1',
+      path: session.path,
+      range: 'Sheet1!A1',
+      valuesJson: '[[1]]',
+      clientVersion: 'test',
+      requestId: 'shared-request-id',
+      opener,
+    });
+    expect(result).toMatchObject({
+      outcome: 'FAILED',
+      failure_code: 'sheet_identity_changed',
+    });
+    expect(finalize).not.toHaveBeenCalled();
+    expect(opener).not.toHaveBeenCalled();
   });
 
   it('reports a request id and does not mutate when begin cannot be confirmed', async () => {

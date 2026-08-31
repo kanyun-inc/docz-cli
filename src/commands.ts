@@ -9,6 +9,7 @@ import type { Command } from 'commander';
 import {
   ConflictError,
   DocSyncClient,
+  DocSyncHTTPError,
   type LinkDiagnostic,
   MoveError,
   type ShareLinkInspection,
@@ -414,7 +415,13 @@ async function beginSheetOperationWithRecovery(
         ...input,
         signal: sheetRequestSignal(beginTimeout),
       });
-    } catch {
+    } catch (error) {
+      // A 409 such as request_id_conflict is a definite rejection, not a lost
+      // response. Keep recovery for transport failures and other responses
+      // whose operation state still needs to be read back conservatively.
+      if (error instanceof DocSyncHTTPError && error.status === 409) {
+        throw error;
+      }
       const queryTimeout = Math.min(5_000, localDeadline - Date.now());
       if (queryTimeout <= 0) break;
       try {
@@ -523,16 +530,31 @@ export async function executeSheetSet(input: {
   }
 
   const requestId = input.requestId ?? randomUUID();
-  const operation = await beginSheetOperationWithRecovery(
-    input.client,
-    {
-      spaceId: session.space_id,
+  let operation: SheetOperation | undefined;
+  try {
+    operation = await beginSheetOperationWithRecovery(
+      input.client,
+      {
+        spaceId: session.space_id,
+        path: session.path,
+        requestId,
+        clientVersion: input.clientVersion,
+      },
+      timeoutMs
+    );
+  } catch (error) {
+    return {
+      outcome: 'FAILED',
+      phase: 'load',
+      space_id: session.space_id,
       path: session.path,
-      requestId,
-      clientVersion: input.clientVersion,
-    },
-    timeoutMs
-  );
+      unit_id: session.unit_id,
+      collaboration_status: 'NOT_STARTED',
+      request_id: requestId,
+      range: input.range,
+      failure_code: classifySheetFailure(error, 'operation_begin_unconfirmed'),
+    };
+  }
   if (!operation) {
     return {
       outcome: 'FAILED',
@@ -554,7 +576,10 @@ export async function executeSheetSet(input: {
     operation.file_path !== session.path ||
     operation.unit_id !== session.unit_id
   ) {
-    if (operation.outcome === 'PENDING') {
+    if (
+      operation.outcome === 'PENDING' &&
+      operation.execution_allowed === true
+    ) {
       await confirmSheetOperation(input.client, {
         spaceId: operation.space_id,
         operationId: operation.id,
