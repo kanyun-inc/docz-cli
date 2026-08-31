@@ -570,6 +570,27 @@ export async function executeSheetSet(input: {
         'No sheet mutation was attempted; use the request ID to inspect the audit operation before retrying.',
     };
   }
+  if (operation.outcome !== 'PENDING') {
+    return {
+      outcome: operation.outcome,
+      phase: 'confirm',
+      space_id: session.space_id,
+      path: session.path,
+      unit_id: session.unit_id,
+      collaboration_status:
+        operation.last_collaboration_status || 'NOT_REOPENED',
+      request_id: requestId,
+      operation_id: operation.id,
+      range: input.range,
+      failure_code: operation.failure_code || undefined,
+      ...(operation.outcome === 'UNKNOWN'
+        ? {
+            warning:
+              'The existing request has an unknown outcome; reread the range before retrying.',
+          }
+        : {}),
+    };
+  }
   if (
     operation.space_id !== session.space_id ||
     operation.file_ref_id !== session.file_ref_id ||
@@ -602,27 +623,6 @@ export async function executeSheetSet(input: {
       operation_id: operation.id,
       range: input.range,
       failure_code: 'sheet_identity_changed',
-    };
-  }
-  if (operation.outcome !== 'PENDING') {
-    return {
-      outcome: operation.outcome,
-      phase: 'confirm',
-      space_id: session.space_id,
-      path: session.path,
-      unit_id: session.unit_id,
-      collaboration_status:
-        operation.last_collaboration_status || 'NOT_REOPENED',
-      request_id: requestId,
-      operation_id: operation.id,
-      range: input.range,
-      failure_code: operation.failure_code || undefined,
-      ...(operation.outcome === 'UNKNOWN'
-        ? {
-            warning:
-              'The existing request has an unknown outcome; reread the range before retrying.',
-          }
-        : {}),
     };
   }
   if (operation.execution_allowed !== true) {

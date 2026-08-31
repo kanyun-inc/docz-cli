@@ -381,6 +381,34 @@ describe('Sheet commands', () => {
     expect(opener).not.toHaveBeenCalled();
   });
 
+  it('returns a stored terminal outcome after the canonical unit changes', async () => {
+    const opener = vi.fn();
+    const finalize = vi.fn();
+    const result = await executeSheetSet({
+      client: fakeClient({
+        beginSheetOperation: vi.fn(async () => ({
+          ...operation('SYNCED'),
+          file_ref_id: 'ref-old',
+          unit_id: 'unit-old',
+          execution_allowed: false,
+        })),
+        finalizeSheetOperation: finalize,
+      }),
+      baseUrl: 'https://docz.example.com',
+      token: 'fake-token',
+      spaceId: 'space-1',
+      path: session.path,
+      range: 'Sheet1!A1',
+      valuesJson: '[[1]]',
+      clientVersion: 'test',
+      requestId: 'request-1',
+      opener,
+    });
+    expect(result.outcome).toBe('SYNCED');
+    expect(opener).not.toHaveBeenCalled();
+    expect(finalize).not.toHaveBeenCalled();
+  });
+
   it('does not mutate when a lost begin response is recovered by query', async () => {
     const begin = vi.fn(async () => {
       throw new Error('response lost');
