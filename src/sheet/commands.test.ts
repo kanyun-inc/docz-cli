@@ -29,6 +29,7 @@ function operation(outcome: SheetOperation['outcome']): SheetOperation {
     file_ref_id: 'ref-1',
     file_path: 'Budget.sheet.json',
     unit_id: 'unit-1',
+    range: 'Sheet1!A1',
     client_type: 'docz-cli',
     client_version: 'test',
     operation: 'set',
@@ -369,7 +370,13 @@ describe('Sheet commands', () => {
     });
     const finalize = vi.fn(async () => operation('FAILED'));
     const result = await executeSheetSet({
-      client: fakeClient({ finalizeSheetOperation: finalize }),
+      client: fakeClient({
+        beginSheetOperation: vi.fn(async () => ({
+          ...operation('PENDING'),
+          range: 'Missing!A1',
+        })),
+        finalizeSheetOperation: finalize,
+      }),
       baseUrl: 'https://docz.example.com',
       token: 'fake-token',
       spaceId: 'space-1',
@@ -466,11 +473,117 @@ describe('Sheet commands', () => {
       space_id: 'space-old',
       path: 'Archived/Budget.sheet.json',
       unit_id: 'unit-old',
+      range: 'Sheet1!A1',
     });
     expect(result.warning).toContain('historical request');
     expect(result.warning).toContain('no mutation was sent');
     expect(opener).not.toHaveBeenCalled();
     expect(finalize).not.toHaveBeenCalled();
+  });
+
+  it('does not label a legacy terminal replay with the requested range', async () => {
+    const result = await executeSheetSet({
+      client: fakeClient({
+        beginSheetOperation: vi.fn(async () => ({
+          ...operation('SYNCED'),
+          range: undefined,
+          execution_allowed: false,
+        })),
+      }),
+      baseUrl: 'https://docz.example.com',
+      token: 'fake-token',
+      spaceId: 'space-1',
+      path: session.path,
+      range: 'Sheet1!$B$2',
+      valuesJson: '[[2]]',
+      clientVersion: 'test',
+      requestId: 'legacy-request',
+    });
+    expect(result).toMatchObject({
+      outcome: 'SYNCED',
+      range: null,
+      requested_range: 'Sheet1!B2',
+      range_verified: false,
+    });
+    expect(result.warning).toContain('historical range is unknown');
+  });
+
+  it('fails closed before mutation when a new operation has no range binding', async () => {
+    const opener = vi.fn();
+    const finalize = vi.fn(async () => operation('FAILED'));
+    const begin = vi.fn(async () => ({
+      ...operation('PENDING'),
+      range: undefined,
+      execution_allowed: true,
+    }));
+    const result = await executeSheetSet({
+      client: fakeClient({
+        beginSheetOperation: begin,
+        finalizeSheetOperation: finalize,
+      }),
+      baseUrl: 'https://docz.example.com',
+      token: 'fake-token',
+      spaceId: 'space-1',
+      path: session.path,
+      range: 'Sheet1!$A$1',
+      valuesJson: '[[1]]',
+      clientVersion: 'test',
+      requestId: 'unbound-request',
+      opener,
+    });
+    expect(begin).toHaveBeenCalledWith(
+      expect.objectContaining({ range: 'Sheet1!A1' })
+    );
+    expect(result).toMatchObject({
+      outcome: 'FAILED',
+      range: null,
+      requested_range: 'Sheet1!A1',
+      range_verified: false,
+      failure_code: 'operation_range_unbound',
+    });
+    expect(opener).not.toHaveBeenCalled();
+    expect(finalize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'FAILED',
+        failureCode: 'operation_range_unbound',
+      })
+    );
+  });
+
+  it('fails closed before mutation when the operation is bound to another range', async () => {
+    const opener = vi.fn();
+    const finalize = vi.fn(async () => operation('FAILED'));
+    const result = await executeSheetSet({
+      client: fakeClient({
+        beginSheetOperation: vi.fn(async () => ({
+          ...operation('PENDING'),
+          range: 'Sheet1!B2',
+          execution_allowed: true,
+        })),
+        finalizeSheetOperation: finalize,
+      }),
+      baseUrl: 'https://docz.example.com',
+      token: 'fake-token',
+      spaceId: 'space-1',
+      path: session.path,
+      range: 'Sheet1!A1',
+      valuesJson: '[[1]]',
+      clientVersion: 'test',
+      requestId: 'mismatched-range-request',
+      opener,
+    });
+    expect(result).toMatchObject({
+      outcome: 'FAILED',
+      range: 'Sheet1!B2',
+      failure_code: 'collaboration_conflict',
+    });
+    expect(opener).not.toHaveBeenCalled();
+    expect(finalize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'FAILED',
+        failureCode: 'collaboration_conflict',
+      })
+    );
   });
 
   it('does not mutate when a lost begin response is recovered by query', async () => {

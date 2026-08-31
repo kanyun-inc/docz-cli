@@ -28,10 +28,15 @@ import {
   classifySheetWriteFailure,
   type SheetFailureCode,
 } from './sheet/errors.js';
-import { parseSheetRange, parseValuesMatrix } from './sheet/range.js';
+import {
+  normalizeSheetRange,
+  parseSheetRange,
+  parseValuesMatrix,
+} from './sheet/range.js';
 import type {
   OpenUniverSheet,
   SheetCLIResult,
+  SheetCommandResult,
   SheetOpener,
   SheetOperation,
   SheetOutcome,
@@ -373,6 +378,18 @@ function sheetPreflightFailure(input: {
   };
 }
 
+function sheetOperationRangeFields(
+  operation: SheetOperation,
+  requestedRange: string
+): Pick<SheetCommandResult, 'range' | 'requested_range' | 'range_verified'> {
+  if (operation.range) return { range: operation.range };
+  return {
+    range: null,
+    requested_range: requestedRange,
+    range_verified: false,
+  };
+}
+
 function classifySheetLoadFailure(error: unknown): SheetFailureCode {
   if (error instanceof DocSyncHTTPError) {
     if (error.status === 401 || error.status === 403) {
@@ -521,6 +538,7 @@ async function beginSheetOperationWithRecovery(
   input: {
     spaceId: string;
     path: string;
+    range: string;
     requestId: string;
     clientVersion: string;
   },
@@ -675,6 +693,7 @@ export async function executeSheetSet(input: {
     });
   }
   let values: ReturnType<typeof parseValuesMatrix>;
+  const normalizedRange = normalizeSheetRange(parsed);
   try {
     values = parseValuesMatrix(input.valuesJson, parsed);
   } catch {
@@ -682,7 +701,7 @@ export async function executeSheetSet(input: {
       phase: 'validate',
       spaceId: input.spaceId,
       path: input.path,
-      range: input.range,
+      range: normalizedRange,
       requestId: input.requestId,
       failureCode: 'sheet_write_invalid_values',
     });
@@ -695,7 +714,7 @@ export async function executeSheetSet(input: {
       phase: 'validate',
       spaceId: input.spaceId,
       path: input.path,
-      range: input.range,
+      range: normalizedRange,
       requestId: input.requestId,
       failureCode: 'sheet_timeout_invalid',
     });
@@ -712,7 +731,7 @@ export async function executeSheetSet(input: {
       phase: 'load',
       spaceId: input.spaceId,
       path: input.path,
-      range: input.range,
+      range: normalizedRange,
       requestId: input.requestId,
       failureCode: classifySheetLoadFailure(error),
     });
@@ -725,7 +744,7 @@ export async function executeSheetSet(input: {
       path: session.path,
       unit_id: session.unit_id,
       collaboration_status: 'NOT_STARTED',
-      range: input.range,
+      range: normalizedRange,
       failure_code: 'sheet_write_forbidden',
     };
   }
@@ -738,6 +757,7 @@ export async function executeSheetSet(input: {
       {
         spaceId: session.space_id,
         path: session.path,
+        range: normalizedRange,
         requestId,
         clientVersion: input.clientVersion,
       },
@@ -752,7 +772,7 @@ export async function executeSheetSet(input: {
       unit_id: session.unit_id,
       collaboration_status: 'NOT_STARTED',
       request_id: requestId,
-      range: input.range,
+      range: normalizedRange,
       failure_code: classifySheetFailure(error, 'operation_begin_unconfirmed'),
     };
   }
@@ -765,7 +785,7 @@ export async function executeSheetSet(input: {
       unit_id: session.unit_id,
       collaboration_status: 'NOT_STARTED',
       request_id: requestId,
-      range: input.range,
+      range: normalizedRange,
       failure_code: 'operation_begin_unconfirmed',
       warning:
         'No sheet mutation was attempted; use the request ID to inspect the audit operation before retrying.',
@@ -790,6 +810,11 @@ export async function executeSheetSet(input: {
         'This historical request belongs to an earlier Sheet identity; no mutation was sent to the Sheet currently at this path.'
       );
     }
+    if (!operation.range) {
+      warnings.push(
+        'This operation predates range binding; its historical range is unknown.'
+      );
+    }
     return {
       outcome: operation.outcome,
       phase: 'confirm',
@@ -800,7 +825,7 @@ export async function executeSheetSet(input: {
         operation.last_collaboration_status || 'NOT_REOPENED',
       request_id: requestId,
       operation_id: operation.id,
-      range: input.range,
+      ...sheetOperationRangeFields(operation, normalizedRange),
       failure_code: operation.failure_code || undefined,
       warning: warnings.length > 0 ? warnings.join(' ') : undefined,
     };
@@ -835,7 +860,7 @@ export async function executeSheetSet(input: {
       collaboration_status: 'NOT_STARTED',
       request_id: requestId,
       operation_id: operation.id,
-      range: input.range,
+      range: normalizedRange,
       failure_code: 'sheet_identity_changed',
     };
   }
@@ -849,10 +874,40 @@ export async function executeSheetSet(input: {
       collaboration_status: 'NOT_STARTED',
       request_id: requestId,
       operation_id: operation.id,
-      range: input.range,
+      ...sheetOperationRangeFields(operation, normalizedRange),
       failure_code: 'operation_execution_not_claimed',
+      warning: operation.range
+        ? 'This request ID already exists or its create response was lost; no new mutation was sent. Inspect the operation and reread the range before retrying with a new request ID.'
+        : 'This request ID belongs to an unbound legacy operation; no new mutation was sent and its historical range is unknown. Inspect the operation before retrying with a new request ID.',
+    };
+  }
+  if (operation.range !== normalizedRange) {
+    const failureCode: SheetFailureCode = operation.range
+      ? 'collaboration_conflict'
+      : 'operation_range_unbound';
+    await confirmSheetOperation(input.client, {
+      spaceId: operation.space_id,
+      operationId: operation.id,
+      requestId,
+      outcome: 'FAILED',
+      collaborationStatus: 'NOT_STARTED',
+      failureCode,
+      deadlineAt: operation.deadline_at,
+      timeoutMs,
+    });
+    return {
+      outcome: 'FAILED',
+      phase: 'load',
+      space_id: operation.space_id,
+      path: operation.file_path,
+      unit_id: operation.unit_id,
+      collaboration_status: 'NOT_STARTED',
+      request_id: requestId,
+      operation_id: operation.id,
+      ...sheetOperationRangeFields(operation, normalizedRange),
+      failure_code: failureCode,
       warning:
-        'This request ID already exists or its create response was lost; no new mutation was sent. Inspect the operation and reread the range before retrying with a new request ID.',
+        'The server did not bind this operation to the requested range; no Sheet mutation was sent.',
     };
   }
   let sheet: OpenUniverSheet | undefined;
@@ -923,7 +978,7 @@ export async function executeSheetSet(input: {
       collaboration_status: collaborationStatus,
       request_id: requestId,
       operation_id: operation.id,
-      range: input.range,
+      range: normalizedRange,
       ...(outcome === 'UNKNOWN'
         ? {
             warning:
@@ -974,7 +1029,7 @@ export async function executeSheetSet(input: {
       collaboration_status: collaborationStatus,
       request_id: requestId,
       operation_id: operation.id,
-      range: input.range,
+      range: normalizedRange,
       failure_code: failureCode,
       ...(mutationOutcomeUnknown
         ? {

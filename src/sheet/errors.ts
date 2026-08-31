@@ -18,6 +18,7 @@ export type SheetFailureCode =
   | 'initial_load_failed'
   | 'sheet_write_forbidden'
   | 'operation_begin_unconfirmed'
+  | 'operation_range_unbound'
   | 'sheet_identity_changed'
   | 'operation_execution_not_claimed'
   | 'interrupted_after_mutation'

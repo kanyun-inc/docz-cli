@@ -722,6 +722,7 @@ export class DocSyncClient {
   async beginSheetOperation(input: {
     spaceId: string;
     path: string;
+    range: string;
     requestId: string;
     clientVersion: string;
     signal?: AbortSignal;
@@ -732,6 +733,7 @@ export class DocSyncClient {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         path: input.path,
+        range: input.range,
         request_id: input.requestId,
         operation: 'set',
         client_version: input.clientVersion,

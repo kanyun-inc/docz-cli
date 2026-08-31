@@ -36,6 +36,16 @@ export function parseSheetRange(input: string): ParsedSheetRange {
   return { sheetName, a1, rows, columns };
 }
 
+/** Stable audit identity for logically equivalent A1 range spellings. */
+export function normalizeSheetRange(range: ParsedSheetRange): string {
+  // Quote names containing separators or quotes so the canonical identity can
+  // be parsed again without changing the worksheet name.
+  const sheetName = /[!']/.test(range.sheetName)
+    ? `'${range.sheetName.replace(/'/g, "''")}'`
+    : range.sheetName;
+  return `${sheetName}!${range.a1}`;
+}
+
 export function parseValuesMatrix(
   json: string,
   range: ParsedSheetRange

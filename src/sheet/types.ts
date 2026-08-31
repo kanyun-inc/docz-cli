@@ -24,6 +24,7 @@ export interface SheetOperation {
   file_ref_id: string;
   file_path: string;
   unit_id: string;
+  range?: string;
   client_type: string;
   client_version: string;
   operation: 'set';
@@ -46,7 +47,9 @@ export interface SheetCommandResult {
   collaboration_status: string;
   request_id?: string;
   operation_id?: string;
-  range: string;
+  range: string | null;
+  requested_range?: string;
+  range_verified?: false;
   values?: unknown[][];
   failure_code?: SheetFailureCode;
   warning?: string;

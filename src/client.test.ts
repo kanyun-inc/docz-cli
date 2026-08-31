@@ -495,6 +495,7 @@ describe('DocSyncClient', () => {
             file_ref_id: 'file-ref-1',
             file_path: 'Budget.sheet.json',
             unit_id: 'unit-1',
+            range: 'Sheet1!A1:B2',
             client_type: 'docz-cli',
             client_version: 'test',
             operation: 'set',
@@ -508,12 +509,14 @@ describe('DocSyncClient', () => {
     await c.beginSheetOperation({
       spaceId: SID,
       path: 'Budget.sheet.json',
+      range: 'Sheet1!A1:B2',
       requestId: 'request-1',
       clientVersion: 'test',
     });
 
     expect(receivedBody).toEqual({
       path: 'Budget.sheet.json',
+      range: 'Sheet1!A1:B2',
       request_id: 'request-1',
       operation: 'set',
       client_version: 'test',
