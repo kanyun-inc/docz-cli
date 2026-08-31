@@ -1,7 +1,7 @@
 ---
 name: docz
-description: Read, write, and collaboratively edit company DocSync documents. Triggers on "docs", "documents", "upload file", "read space", "docz", "DocSync", "save file", "rollback", "restore", "trash", "version history", "comment", "share link", "diff", "collab", "collaborative editing", "Neovim"
-version: 0.15.0
+description: Read, write, collaboratively edit, and safely search local synchronized copies of company DocSync documents. Triggers on "docs", "documents", "upload file", "read space", "docz", "DocSync", "save file", "rollback", "restore", "trash", "version history", "comment", "share link", "diff", "collab", "collaborative editing", "local sync", "sync root", "bulk document search", "Neovim"
+version: 0.16.0
 author: kris
 tags:
   - docsync
@@ -9,7 +9,7 @@ tags:
   - file-sync
   - knowledge
 user-invocable: true
-argument-hint: "spaces | whoami | ls/cat/write/upload/mkdir/mv/rm/log/rollback/trash/restore/shortlink/diff | collab cat/write/publish/bridge | comment <subcmd> | share <subcmd>"
+argument-hint: "spaces | whoami | ls/cat/write/upload/mkdir/mv/rm/log/rollback/trash/restore/shortlink/diff | link info | local root | collab cat/write/publish/bridge | comment <subcmd> | share <subcmd>"
 allowed-tools: Bash(*)
 ---
 
@@ -52,6 +52,13 @@ G160-研发:docs/guide.md      → specific file
 
 Commands that take a `<space>` or `<space>:<path>` target accept DocSync URLs directly. `share cat` and `share info` accept share URLs separately. `login`, `whoami`, and `spaces` do not take document URLs.
 
+Use `link info <url> [--json]` to inspect an ordinary DocSync URL, and use
+`share info <token-or-url> [--json]` for a share link. Do not interchange these
+entry points: ordinary results contain Space permission and owner metadata,
+while share results contain share access, visibility, role, creator, and expiry.
+In both results, `link_status` is independent from `document_status`; an
+`unknown` value means the server or transport could not confirm the fact.
+
 Supported DocSync URL formats:
 
 - **Short URL (fileId)**: `/s/{slug}/f/{fileId}` — resolves fileId to path via API
@@ -84,11 +91,13 @@ npx docz-cli@latest cat --ref <space>:<path>              # read file + print re
 npx docz-cli@latest upload <local-file> <space>[:<dir>]   # upload file
 npx docz-cli@latest image upload <local-image>            # upload image to OSS, get public URL
 npx docz-cli@latest mkdir <space>:<path>                  # create folder
-npx docz-cli@latest mv <space>:<from> <to>                # rename/move
+npx docz-cli@latest mv <source> <destination-path>        # destination is Space-root-relative
 npx docz-cli@latest rm <space>:<path>                     # delete (30-day trash)
 npx docz-cli@latest log <space>[:<path>]                  # change history
 npx docz-cli@latest diff <space>[:<path>] <commit> [<from>]  # view changes
 npx docz-cli@latest shortlink <space>:<path>              # get short URL
+npx docz-cli@latest link info <url> [--json]              # inspect ordinary link metadata
+npx docz-cli@latest local root [--json]                   # print configured local sync root only
 ```
 
 ### Safe Write (with conflict detection)
@@ -156,6 +165,7 @@ For collaborative edits that need to write back, always use normal `collab cat` 
 **Write strategy**:
 
 - Prefer `collab cat/write` for editing existing DocSync text documents, especially `.md`, `.txt`, `.csv`, `.html`, and docs the user may have open in Web.
+- Use plain `write` to create a new text file; collaborative editing only supports existing documents.
 - Always use `collab cat/write` when the user mentions collaboration, browser editing, CLI + browser testing, conflicts, shared editing, or reducing conflict files.
 - Use plain `cat/write` only for simple one-shot updates where no active editor is expected.
 - Do not mix `cat` + `collab write`; use `collab cat` to get `collab_hash`.
@@ -198,7 +208,7 @@ npx docz-cli@latest share create <url> [--expires 7d]      # create share link f
 npx docz-cli@latest share list <space> [--file <path>]
 npx docz-cli@latest share update <space> <link-id> [--expires 30d]
 npx docz-cli@latest share cat <token-or-url> [--raw]
-npx docz-cli@latest share info <token-or-url>
+npx docz-cli@latest share info <token-or-url> [--json]     # inspect share-specific metadata
 npx docz-cli@latest share rm <space> <link-id>
 ```
 
@@ -211,6 +221,36 @@ npx docz-cli@latest diff G160-研发:docs/guide.md af0fb9b          # file-level
 npx docz-cli@latest diff G160-研发:docs/guide.md af0fb9b b2c3d4e  # compare two commits
 npx docz-cli@latest diff G160-研发 af0fb9b                         # space-level: which files changed
 ```
+
+### Local Sync Search (Opt-in)
+
+Use the local synchronization root only when the user needs a bulk or
+multi-document search and the local copy would materially accelerate it. Do not
+run `local root` for ordinary reads or edits, or use the local copy as the
+default document source. The local root is never a write target, and its
+freshness is not guaranteed.
+
+1. Run `local root --json` only for the search scenario above. This reads
+   client configuration only and MUST NOT enumerate synchronized files.
+2. Treat a missing client configuration or `exists: false` as normal
+   unavailability of this optional optimization. Do not guess, derive, or
+   create a path, and do not block the task; continue with remote Docz
+   commands. If the configuration is invalid, report it briefly and continue
+   remotely.
+3. Only when the returned root exists, show its path and ask the user whether
+   this task may search it. State that the local copy may be stale.
+4. Before explicit confirmation, do not run `find`, `rg`, directory listings,
+   or read any file beneath the root.
+5. After confirmation, limit access to read-only search for the current task.
+   Do not treat confirmation as a persistent permission.
+6. Never create, edit, delete, rename, or move a local synchronized file.
+7. After local search identifies a document, re-read the current remote
+   content before editing. Use `collab cat/write` for an existing supported
+   text document. Use plain `write` to create a new text file because
+   collaborative editing cannot create files. Use the other Docz CLI commands
+   for upload, directory, move, and delete operations.
+8. If collaboration is unavailable, fall back to remote `cat/write`, never to
+   a local filesystem write.
 
 ### Neovim / Terminal Editor Bridge
 

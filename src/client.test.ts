@@ -1,7 +1,7 @@
 import { HttpResponse, http } from 'msw';
 import { setupServer } from 'msw/node';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { ConflictError, DocSyncClient } from './client.js';
+import { ConflictError, DocSyncClient, MoveError } from './client.js';
 
 const BASE = 'https://docz.test.com';
 const TOKEN = 'test-token';
@@ -33,6 +33,15 @@ const mockTree = [
   { name: 'docs', type: 'tree', size: 0 },
 ];
 
+const mockFullTree = [
+  { path: 'README.md', type: 'blob', size: 1024 },
+  { path: 'docs', type: 'tree', size: 0 },
+  { path: 'docs/guide.md', type: 'blob', size: 512 },
+  { path: 'docs/nested', type: 'tree', size: 0 },
+  { path: 'docs/nested/example.md', type: 'blob', size: 256 },
+  { path: 'docs-old/archive.md', type: 'blob', size: 128 },
+];
+
 const mockLog = [
   {
     hash: 'abc1234',
@@ -59,9 +68,18 @@ const mockShareLink = {
 const mockShareFileInfo = {
   file_path: 'README.md',
   file_name: 'README.md',
+  space_id: SID,
   space_name: 'G160-研发',
+  space_slug: 'yanfa',
   created_by_name: '测试用户',
   expires_at: null,
+  has_space_access: true,
+  role: 'editor',
+  is_public: true,
+  is_dir: false,
+  document_exists: true,
+  owner_name: '空间管理员',
+  owner_email: 'owner@example.com',
 };
 
 const mockDiffResponse = {
@@ -136,10 +154,7 @@ const server = setupServer(
   http.get(`${BASE}/api/spaces/:sid/tree`, () => HttpResponse.json(mockTree)),
 
   http.get(`${BASE}/api/spaces/:sid/tree/full`, () =>
-    HttpResponse.json([
-      ...mockTree,
-      { name: 'docs/guide.md', type: 'blob', size: 512 },
-    ])
+    HttpResponse.json(mockFullTree)
   ),
 
   http.get(`${BASE}/api/spaces/:sid/blob/:fp`, ({ params }) => {
@@ -209,6 +224,38 @@ const server = setupServer(
 
   http.post(`${BASE}/api/spaces/:sid/files/rename`, async ({ request }) => {
     const body = (await request.json()) as Record<string, string>;
+    if (body.new_path === 'missing/new.md') {
+      return HttpResponse.json(
+        {
+          error: 'destination_parent_not_found',
+          message: 'Destination parent directory does not exist',
+          outcome: 'failed',
+          old_path: body.old_path,
+          new_path: body.new_path,
+          parent_path: 'missing',
+        },
+        { status: 404 }
+      );
+    }
+    if (body.new_path === 'unknown/new.md') {
+      return HttpResponse.json(
+        {
+          error: 'move_status_unknown',
+          message: 'Move result is unknown; verify both paths before retrying',
+          outcome: 'unknown',
+          old_path: body.old_path,
+          new_path: body.new_path,
+          parent_path: 'unknown',
+        },
+        { status: 503 }
+      );
+    }
+    if (body.new_path === 'legacy/new.md') {
+      return HttpResponse.text(
+        'rename failed: seafile_move_file: searpc error: move file failed',
+        { status: 500 }
+      );
+    }
     return HttpResponse.json(body);
   }),
 
@@ -220,9 +267,13 @@ const server = setupServer(
     });
   }),
 
-  http.get(`${BASE}/api/spaces/:sid/log/`, () => HttpResponse.json(mockLog)),
+  http.get(`${BASE}/api/spaces/:sid/log/`, () =>
+    HttpResponse.json({ commits: mockLog })
+  ),
 
-  http.get(`${BASE}/api/spaces/:sid/log/:fp`, () => HttpResponse.json(mockLog)),
+  http.get(`${BASE}/api/spaces/:sid/log/:fp`, () =>
+    HttpResponse.json({ commits: mockLog })
+  ),
 
   http.get(`${BASE}/api/spaces/:sid/trash`, () =>
     HttpResponse.json([
@@ -342,6 +393,15 @@ const server = setupServer(
     if (params.token === 'xYz123AbC') {
       return HttpResponse.json(mockShareFileInfo);
     }
+    if (params.token === 'loginRequired') {
+      return HttpResponse.text('login required', { status: 401 });
+    }
+    if (params.token === 'forbidden') {
+      return HttpResponse.text('forbidden', { status: 403 });
+    }
+    if (params.token === 'expired') {
+      return HttpResponse.text('expired', { status: 410 });
+    }
     return HttpResponse.text('not found', { status: 404 });
   }),
 
@@ -367,6 +427,49 @@ const server = setupServer(
       return HttpResponse.json(mockFileRef);
     }
     return HttpResponse.text('not found', { status: 404 });
+  }),
+
+  http.get(`${BASE}/api/file-refs/:fileId/diagnostic`, ({ params }) => {
+    if (params.fileId === 'NNjrcj8c') {
+      return HttpResponse.json({
+        link_valid: true,
+        space_exists: true,
+        has_space_access: false,
+        document_applicable: true,
+        document_exists: true,
+        space_id: SID,
+        slug: 'yanfa',
+        path: 'README.md',
+        is_dir: false,
+        owner_name: '空间管理员',
+        owner_email: 'owner@example.com',
+      });
+    }
+    return HttpResponse.json(
+      {
+        link_valid: false,
+        space_exists: false,
+        has_space_access: false,
+        document_applicable: true,
+        document_exists: false,
+      },
+      { status: 404 }
+    );
+  }),
+
+  http.get(`${BASE}/api/link-diagnostics/path`, ({ request }) => {
+    const url = new URL(request.url);
+    return HttpResponse.json({
+      link_valid: true,
+      space_exists: true,
+      has_space_access: true,
+      document_applicable: url.searchParams.get('path') !== null,
+      document_exists: true,
+      space_id: SID,
+      slug: url.searchParams.get('slug') ?? 'yanfa',
+      path: url.searchParams.get('path') ?? '',
+      is_dir: url.searchParams.get('path') === '',
+    });
   })
 );
 
@@ -437,9 +540,22 @@ describe('DocSyncClient', () => {
     expect(entries[0].name).toBe('README.md');
   });
 
-  it('treeFull() returns recursive entries', async () => {
+  it('treeFull() returns recursive entries with full paths from Space root', async () => {
     const entries = await c.treeFull(SID);
-    expect(entries).toHaveLength(3);
+    expect(entries).toEqual(mockFullTree);
+    expect(entries[2].path).toBe('docs/guide.md');
+  });
+
+  it('treeFull() limits recursive entries to the requested subdirectory', async () => {
+    const entries = await c.treeFull(SID, '/docs/');
+    expect(entries.map((entry) => entry.path)).toEqual([
+      'docs/guide.md',
+      'docs/nested',
+      'docs/nested/example.md',
+    ]);
+    expect(entries.some((entry) => entry.path.startsWith('docs-old/'))).toBe(
+      false
+    );
   });
 
   it('cat() returns content', async () => {
@@ -509,8 +625,63 @@ describe('DocSyncClient', () => {
     await expect(c.rm(SID, 'old.md')).resolves.not.toThrow();
   });
 
-  it('mv() succeeds', async () => {
-    await expect(c.mv(SID, 'a.md', 'b.md')).resolves.not.toThrow();
+  it('mv() accepts a nested Unicode destination path', async () => {
+    await expect(
+      c.mv(SID, 'docs/旧文档.md', '归档/新文档.md')
+    ).resolves.not.toThrow();
+  });
+
+  it('mv() preserves a structured confirmed failure', async () => {
+    await expect(c.mv(SID, 'a.md', 'missing/new.md')).rejects.toMatchObject({
+      name: 'MoveError',
+      status: 404,
+      detail: {
+        error: 'destination_parent_not_found',
+        outcome: 'failed',
+        old_path: 'a.md',
+        new_path: 'missing/new.md',
+        parent_path: 'missing',
+      },
+    });
+  });
+
+  it('mv() preserves a structured unknown outcome', async () => {
+    await expect(c.mv(SID, 'a.md', 'unknown/new.md')).rejects.toMatchObject({
+      name: 'MoveError',
+      status: 503,
+      detail: {
+        error: 'move_status_unknown',
+        outcome: 'unknown',
+      },
+    });
+  });
+
+  it('mv() treats a legacy 5xx response as an unknown outcome', async () => {
+    await expect(c.mv(SID, 'a.md', 'legacy/new.md')).rejects.toMatchObject({
+      name: 'MoveError',
+      status: 500,
+      detail: {
+        error: 'move_status_unknown',
+        outcome: 'unknown',
+      },
+    });
+  });
+
+  it('mv() treats a network failure as an unknown outcome', async () => {
+    server.use(
+      http.post(`${BASE}/api/spaces/:sid/files/rename`, () =>
+        HttpResponse.error()
+      )
+    );
+
+    try {
+      await c.mv(SID, 'a.md', 'b.md');
+      throw new Error('expected mv to fail');
+    } catch (err) {
+      expect(err).toBeInstanceOf(MoveError);
+      expect((err as MoveError).status).toBe(0);
+      expect((err as MoveError).detail.outcome).toBe('unknown');
+    }
   });
 
   it('rollback() succeeds', async () => {
@@ -528,6 +699,16 @@ describe('DocSyncClient', () => {
   it('log() with filepath', async () => {
     const logs = await c.log(SID, 'README.md');
     expect(logs).toHaveLength(1);
+  });
+
+  it('log() returns an empty array when there is no history', async () => {
+    server.use(
+      http.get(`${BASE}/api/spaces/:sid/log/`, () =>
+        HttpResponse.json({ commits: [] })
+      )
+    );
+
+    await expect(c.log(SID)).resolves.toEqual([]);
   });
 
   it('trash() returns entries', async () => {
@@ -628,6 +809,58 @@ describe('DocSyncClient', () => {
     expect(info.file_path).toBe('README.md');
     expect(info.space_name).toBe('G160-研发');
     expect(info.created_by_name).toBe('测试用户');
+    expect(info.document_exists).toBe(true);
+  });
+
+  it('inspectShareLink() maps share lifecycle and access statuses', async () => {
+    await expect(c.inspectShareLink('xYz123AbC')).resolves.toMatchObject({
+      link_status: 'valid',
+      access_status: 'accessible',
+      info: { document_exists: true },
+    });
+    await expect(c.inspectShareLink('loginRequired')).resolves.toEqual({
+      link_status: 'valid',
+      access_status: 'login_required',
+    });
+    await expect(c.inspectShareLink('forbidden')).resolves.toEqual({
+      link_status: 'valid',
+      access_status: 'forbidden',
+    });
+    await expect(c.inspectShareLink('expired')).resolves.toEqual({
+      link_status: 'expired',
+      access_status: 'unknown',
+    });
+    await expect(c.inspectShareLink('bad-token')).resolves.toEqual({
+      link_status: 'invalid',
+      access_status: 'unknown',
+    });
+  });
+
+  it('inspectShareLink() omits authorization when no token is configured', async () => {
+    server.use(
+      http.get(`${BASE}/api/share/public/info`, ({ request }) => {
+        expect(request.headers.has('authorization')).toBe(false);
+        return HttpResponse.json(mockShareFileInfo);
+      })
+    );
+    const anonymousClient = new DocSyncClient(BASE, '');
+    await expect(
+      anonymousClient.inspectShareLink('public')
+    ).resolves.toMatchObject({
+      link_status: 'valid',
+      access_status: 'accessible',
+    });
+  });
+
+  it('inspectShareLink() rejects technical and malformed responses', async () => {
+    server.use(
+      http.get(`${BASE}/api/share/serverError/info`, () =>
+        HttpResponse.text('unavailable', { status: 503 })
+      ),
+      http.get(`${BASE}/api/share/malformed/info`, () => HttpResponse.json({}))
+    );
+    await expect(c.inspectShareLink('serverError')).rejects.toThrow('503');
+    await expect(c.inspectShareLink('malformed')).rejects.toThrow();
   });
 
   it('getSharedFile() throws on invalid token', async () => {
@@ -671,6 +904,45 @@ describe('DocSyncClient', () => {
 
   it('resolveFileRef() throws on unknown', async () => {
     await expect(c.resolveFileRef('bad')).rejects.toThrow('404');
+  });
+
+  it('diagnoseFileRef() preserves valid and invalid results', async () => {
+    await expect(c.diagnoseFileRef('NNjrcj8c', 'yanfa')).resolves.toMatchObject(
+      {
+        link_valid: true,
+        document_exists: true,
+        has_space_access: false,
+      }
+    );
+    await expect(c.diagnoseFileRef('bad')).resolves.toMatchObject({
+      link_valid: false,
+      document_exists: false,
+    });
+  });
+
+  it('diagnosePath() sends path metadata query', async () => {
+    await expect(
+      c.diagnosePath({ slug: 'yanfa', path: 'README.md' })
+    ).resolves.toMatchObject({
+      link_valid: true,
+      path: 'README.md',
+      is_dir: false,
+    });
+  });
+
+  it('diagnostic methods reject technical and malformed responses', async () => {
+    server.use(
+      http.get(`${BASE}/api/file-refs/serverError/diagnostic`, () =>
+        HttpResponse.text('unavailable', { status: 503 })
+      ),
+      http.get(`${BASE}/api/file-refs/malformed/diagnostic`, () =>
+        HttpResponse.json({}, { status: 404 })
+      )
+    );
+    await expect(c.diagnoseFileRef('serverError')).rejects.toThrow('503');
+    await expect(c.diagnoseFileRef('malformed')).rejects.toThrow(
+      'Invalid link diagnostic response'
+    );
   });
 
   // --- Image upload ---

@@ -5,7 +5,13 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename } from 'node:path';
 import type { Command } from 'commander';
-import { ConflictError, DocSyncClient } from './client.js';
+import {
+  ConflictError,
+  DocSyncClient,
+  type LinkDiagnostic,
+  MoveError,
+  type ShareLinkInspection,
+} from './client.js';
 import { startCollabBridge } from './collab/bridge.js';
 import { CollabRoomClient, withCollabRoom } from './collab/room.js';
 import {
@@ -14,6 +20,7 @@ import {
 } from './collab/text.js';
 import { type CollabOpenOptions, CollabUnknownError } from './collab/types.js';
 import { getBaseUrl, getConfigPath, getToken, saveConfig } from './config.js';
+import { registerLocalCommands } from './local.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -31,6 +38,10 @@ function getClient(): DocSyncClient {
     process.exit(1);
   }
   return new DocSyncClient(getBaseUrl(), token);
+}
+
+function getOptionalClient(): DocSyncClient {
+  return new DocSyncClient(getBaseUrl(), getToken() ?? '');
 }
 
 function getRequiredToken(): string {
@@ -85,6 +96,82 @@ function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+const INVALID_WINDOWS_PATH_CHARS = /[<>:"\\|?*]/;
+const WINDOWS_DEVICE_NAME = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/i;
+
+/** Validate a complete destination path relative to the Space root. */
+export function validateDestinationPath(path: string): string | null {
+  if (!path) return 'destination path is required';
+  if (path.startsWith('/')) {
+    return 'destination must be relative to the Space root';
+  }
+
+  for (const segment of path.split('/')) {
+    if (!segment) return 'destination contains an empty path segment';
+    if (segment === '.' || segment === '..') {
+      return 'destination cannot contain "." or ".." segments';
+    }
+    if (Buffer.byteLength(segment, 'utf8') > 255) {
+      return 'a destination path segment exceeds 255 UTF-8 bytes';
+    }
+    if ([...segment].some((char) => char.charCodeAt(0) <= 0x1f)) {
+      return 'destination contains an ASCII control character';
+    }
+    if (INVALID_WINDOWS_PATH_CHARS.test(segment)) {
+      return 'destination contains a character invalid on Windows';
+    }
+    if (segment.endsWith(' ') || segment.endsWith('.')) {
+      return 'a destination path segment ends with a space or dot';
+    }
+    if (WINDOWS_DEVICE_NAME.test(segment)) {
+      return 'destination contains a Windows reserved device name';
+    }
+  }
+  return null;
+}
+
+export interface MoveFailurePresentation {
+  lines: string[];
+  exitCode: 1 | 2;
+}
+
+export function describeMoveFailure(
+  err: unknown,
+  spaceId: string,
+  from: string,
+  to: string
+): MoveFailurePresentation {
+  const detail =
+    err instanceof MoveError
+      ? err.detail
+      : {
+          error: 'move_status_unknown',
+          message: err instanceof Error ? err.message : String(err),
+          outcome: 'unknown' as const,
+          old_path: from,
+          new_path: to,
+        };
+  const oldPath = detail.old_path || from;
+  const newPath = detail.new_path || to;
+  const lines = [
+    `Error: ${detail.message}`,
+    `Resolved move: ${oldPath} → ${newPath}`,
+  ];
+
+  if (detail.error === 'destination_parent_not_found' && detail.parent_path) {
+    lines.push(
+      `Hint: create the parent first with \`docz mkdir ${spaceId}:${detail.parent_path}\`.`
+    );
+  }
+  if (detail.outcome === 'unknown') {
+    lines.push(
+      'Outcome unknown: verify both source and destination paths before retrying.'
+    );
+  }
+
+  return { lines, exitCode: detail.outcome === 'unknown' ? 2 : 1 };
 }
 
 // Share URL: /share/{token}
@@ -204,10 +291,203 @@ export function parseExpires(value: string): string {
 }
 
 /** Extract share token from URL or return as-is */
-function extractShareToken(input: string): string {
+export function extractShareToken(input: string): string {
   const m = input.match(SHARE_URL_RE);
   if (m) return m[1];
   return input;
+}
+
+export type NormalLinkTarget =
+  | {
+      kind: 'file-ref';
+      slug: string;
+      fileId: string;
+      path: '';
+    }
+  | {
+      kind: 'path';
+      slug?: string;
+      spaceId?: string;
+      path: string;
+    };
+
+export interface NormalLinkInfo {
+  link_type: 'normal';
+  link_status: 'valid' | 'invalid' | 'unknown';
+  space_permission:
+    | 'accessible'
+    | 'inaccessible'
+    | 'not_applicable'
+    | 'unknown';
+  document_path: string | null;
+  document_status: 'exists' | 'not_found' | 'not_applicable' | 'unknown';
+  space_admin: { name: string | null; email: string | null } | null;
+  is_folder: boolean | null;
+}
+
+export interface ShareLinkInfo {
+  link_status: 'valid' | 'invalid' | 'expired' | 'unknown';
+  access_status: 'accessible' | 'login_required' | 'forbidden' | 'unknown';
+  visibility: 'public' | 'restricted' | null;
+  space_name: string | null;
+  document_path: string | null;
+  document_status: 'exists' | 'not_found' | 'unknown';
+  role: string | null;
+  shared_by: string | null;
+  expires_at: string | null;
+  is_folder: boolean | null;
+  has_space_access: boolean | null;
+}
+
+function decodePath(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    throw new Error(`Invalid URL path encoding: ${value}`);
+  }
+}
+
+/** Parse a normal Docz URL without making a network request. */
+export function parseNormalLink(input: string): NormalLinkTarget {
+  let pathname: string;
+  try {
+    pathname = new URL(input).pathname;
+  } catch {
+    throw new Error('Expected a full ordinary Docz URL');
+  }
+
+  if (SHARE_URL_RE.test(pathname)) {
+    throw new Error('Share links must use `docz share info`');
+  }
+
+  const fileMatch = pathname.match(/^\/s\/([^/]+)\/f\/([^/]+)\/?$/);
+  if (fileMatch) {
+    return {
+      kind: 'file-ref',
+      slug: decodePath(fileMatch[1]),
+      fileId: decodePath(fileMatch[2]),
+      path: '',
+    };
+  }
+
+  const slugMatch = pathname.match(/^\/s\/([^/]+)(\/.*)?$/);
+  if (slugMatch) {
+    return {
+      kind: 'path',
+      slug: decodePath(slugMatch[1]),
+      path: slugMatch[2] ? decodePath(slugMatch[2].slice(1)) : '',
+    };
+  }
+
+  const legacyMatch = pathname.match(/^\/spaces\/([^/]+)(\/.*)?$/);
+  if (legacyMatch) {
+    return {
+      kind: 'path',
+      spaceId: decodePath(legacyMatch[1]),
+      path: legacyMatch[2] ? decodePath(legacyMatch[2].slice(1)) : '',
+    };
+  }
+
+  throw new Error(
+    'Unrecognized ordinary Docz URL. Expected /s/{slug}[/f/{fileId}], /s/{slug}[/path], or /spaces/{id}[/path]'
+  );
+}
+
+export function mapNormalLinkInfo(diagnostic: LinkDiagnostic): NormalLinkInfo {
+  const documentPath =
+    !diagnostic.link_valid || diagnostic.path === undefined
+      ? null
+      : diagnostic.path === ''
+        ? '/'
+        : `/${diagnostic.path}`;
+  const documentStatus = !diagnostic.link_valid
+    ? 'unknown'
+    : !diagnostic.document_applicable
+      ? 'not_applicable'
+      : diagnostic.document_exists
+        ? 'exists'
+        : 'not_found';
+
+  return {
+    link_type: 'normal',
+    link_status: diagnostic.link_valid ? 'valid' : 'invalid',
+    space_permission: !diagnostic.space_exists
+      ? 'not_applicable'
+      : diagnostic.has_space_access
+        ? 'accessible'
+        : 'inaccessible',
+    document_path: documentPath,
+    document_status: documentStatus,
+    space_admin:
+      diagnostic.owner_name !== undefined ||
+      diagnostic.owner_email !== undefined
+        ? {
+            name: diagnostic.owner_name ?? null,
+            email: diagnostic.owner_email ?? null,
+          }
+        : null,
+    is_folder:
+      typeof diagnostic.is_dir === 'boolean' ? diagnostic.is_dir : null,
+  };
+}
+
+export function mapShareLinkInfo(
+  inspection: ShareLinkInspection
+): ShareLinkInfo {
+  const info = inspection.info;
+  return {
+    link_status: inspection.link_status,
+    access_status: inspection.access_status,
+    visibility: info ? (info.is_public ? 'public' : 'restricted') : null,
+    space_name: info?.space_name ?? null,
+    document_path: info
+      ? info.file_path === ''
+        ? '/'
+        : `/${info.file_path}`
+      : null,
+    document_status: info
+      ? info.document_exists
+        ? 'exists'
+        : 'not_found'
+      : 'unknown',
+    role: info?.role ?? null,
+    shared_by: info?.created_by_name ?? null,
+    expires_at: info?.expires_at ?? null,
+    is_folder: info?.is_dir ?? null,
+    has_space_access: info?.has_space_access ?? null,
+  };
+}
+
+function unknownNormalLinkInfo(): NormalLinkInfo {
+  return {
+    link_type: 'normal',
+    link_status: 'unknown',
+    space_permission: 'unknown',
+    document_path: null,
+    document_status: 'unknown',
+    space_admin: null,
+    is_folder: null,
+  };
+}
+
+function unknownShareLinkInfo(): ShareLinkInfo {
+  return {
+    link_status: 'unknown',
+    access_status: 'unknown',
+    visibility: null,
+    space_name: null,
+    document_path: null,
+    document_status: 'unknown',
+    role: null,
+    shared_by: null,
+    expires_at: null,
+    is_folder: null,
+    has_space_access: null,
+  };
+}
+
+function formatNullable(value: string | boolean | null): string {
+  return value === null ? 'unknown' : String(value);
 }
 
 /** Read all of stdin into a string */
@@ -264,6 +544,8 @@ export function markdownImageRef(filename: string, url: string): string {
 // ---------------------------------------------------------------------------
 
 export function registerCommands(program: Command): void {
+  registerLocalCommands(program);
+
   // --- login ---
   program
     .command('login')
@@ -330,18 +612,31 @@ export function registerCommands(program: Command): void {
     .action(async (args: string[], opts: { recursive?: boolean }) => {
       const client = getClient();
       const { spaceId, path } = await resolveTarget(client, args);
-      const entries = opts.recursive
-        ? await client.treeFull(spaceId)
-        : await client.ls(spaceId, path);
-      if (entries.length === 0) {
-        console.log('(empty)');
-        return;
-      }
-      for (const e of entries) {
-        if (e.type === 'tree') {
-          console.log(`${e.name}/`);
-        } else {
-          console.log(`${e.name}\t${formatSize(e.size)}`);
+      if (opts.recursive) {
+        const entries = await client.treeFull(spaceId, path);
+        if (entries.length === 0) {
+          console.log('(empty)');
+          return;
+        }
+        for (const e of entries) {
+          if (e.type === 'tree') {
+            console.log(`${e.path}/`);
+          } else {
+            console.log(`${e.path}\t${formatSize(e.size)}`);
+          }
+        }
+      } else {
+        const entries = await client.ls(spaceId, path);
+        if (entries.length === 0) {
+          console.log('(empty)');
+          return;
+        }
+        for (const e of entries) {
+          if (e.type === 'tree') {
+            console.log(`${e.name}/`);
+          } else {
+            console.log(`${e.name}\t${formatSize(e.size)}`);
+          }
         }
       }
     });
@@ -507,18 +802,43 @@ export function registerCommands(program: Command): void {
   // --- mv ---
   program
     .command('mv')
-    .description('Rename/move — docz mv <space>:<from> <to> or <url> <to>')
-    .argument('<target>', 'space:old-path or short URL')
-    .argument('<to>', 'new-path')
-    .action(async (target: string, to: string) => {
+    .description(
+      'Rename or move within a Space — destination is a full Space-root-relative path'
+    )
+    .argument('<source>', 'space:source-path or Docz URL')
+    .argument(
+      '<destination-path>',
+      'full path relative to the Space root, including the final name'
+    )
+    .action(async (source: string, destinationPath: string) => {
+      const invalidReason = validateDestinationPath(destinationPath);
+      if (invalidReason) {
+        console.error(`Error: invalid destination path: ${invalidReason}.`);
+        process.exitCode = 1;
+        return;
+      }
+
       const client = getClient();
-      const { spaceId, path: from } = await resolveTarget(client, [target]);
+      const { spaceId, path: from } = await resolveTarget(client, [source]);
       if (!from) {
         console.error('Error: source path is required.');
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
-      await client.mv(spaceId, from, to);
-      console.log(`Moved: ${from} → ${to}`);
+      try {
+        await client.mv(spaceId, from, destinationPath);
+      } catch (err) {
+        const presentation = describeMoveFailure(
+          err,
+          spaceId,
+          from,
+          destinationPath
+        );
+        for (const line of presentation.lines) console.error(line);
+        process.exitCode = presentation.exitCode;
+        return;
+      }
+      console.log(`Moved: ${from} → ${destinationPath}`);
     });
 
   // --- log ---
@@ -535,7 +855,7 @@ export function registerCommands(program: Command): void {
         return;
       }
       for (const l of logs) {
-        console.log(`${l.hash}  ${l.date}  ${l.message}`);
+        console.log(`${l.hash}  ${l.date}  ${l.author}  ${l.message}`);
       }
     });
 
@@ -698,6 +1018,59 @@ export function registerCommands(program: Command): void {
       console.log(`Comment #${commentId} deleted.`);
     });
 
+  // --- ordinary link metadata ---
+  const link = program
+    .command('link')
+    .description('Inspect ordinary Docz links');
+
+  link
+    .command('info')
+    .description('Show ordinary link metadata — docz link info <url>')
+    .argument('<url>', 'Ordinary Docz URL')
+    .option('--json', 'Output machine-readable JSON')
+    .action(async (url: string, opts: { json?: boolean }) => {
+      const target = parseNormalLink(url);
+      const client = getClient();
+      let result: NormalLinkInfo;
+      try {
+        const diagnostic =
+          target.kind === 'file-ref'
+            ? await client.diagnoseFileRef(target.fileId, target.slug)
+            : await client.diagnosePath({
+                slug: target.slug,
+                spaceId: target.spaceId,
+                path: target.path,
+              });
+        result = mapNormalLinkInfo(diagnostic);
+      } catch (err) {
+        result = unknownNormalLinkInfo();
+        process.exitCode = 2;
+        console.error(
+          `Warning: link diagnostic failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+
+      if (opts.json) {
+        console.log(JSON.stringify(result));
+        return;
+      }
+      console.log(`Link type:        ${result.link_type}`);
+      console.log(`Link status:      ${result.link_status}`);
+      console.log(`Space permission: ${result.space_permission}`);
+      console.log(`Document path:     ${formatNullable(result.document_path)}`);
+      console.log(`Document status:   ${result.document_status}`);
+      const admin = result.space_admin;
+      console.log(
+        `Space admin:       ${
+          admin
+            ? [admin.name, admin.email].filter(Boolean).join(' <') +
+              (admin.name && admin.email ? '>' : '')
+            : 'unknown'
+        }`
+      );
+      console.log(`Folder:            ${formatNullable(result.is_folder)}`);
+    });
+
   // --- share ---
   const share = program.command('share').description('Manage share links');
 
@@ -831,14 +1204,57 @@ export function registerCommands(program: Command): void {
     .command('info')
     .description('Show share link info — docz share info <token-or-url>')
     .argument('<token>', 'Share token or full URL')
-    .action(async (tokenArg: string) => {
-      const client = getClient();
+    .option('--json', 'Output machine-readable JSON')
+    .action(async (tokenArg: string, opts: { json?: boolean }) => {
+      try {
+        const pathname = new URL(tokenArg).pathname;
+        if (/^\/(?:s|spaces)\//.test(pathname)) {
+          throw new Error('Ordinary links must use `docz link info`');
+        }
+      } catch (err) {
+        if (
+          err instanceof Error &&
+          err.message === 'Ordinary links must use `docz link info`'
+        ) {
+          throw err;
+        }
+      }
+
+      const client = getOptionalClient();
       const token = extractShareToken(tokenArg);
-      const info = await client.getSharedFileInfo(token);
-      console.log(`File:       ${info.file_path}`);
-      console.log(`Space:      ${info.space_name}`);
-      console.log(`Shared by:  ${info.created_by_name}`);
-      console.log(`Expires:    ${info.expires_at ?? 'never'}`);
+      let result: ShareLinkInfo;
+      try {
+        result = mapShareLinkInfo(await client.inspectShareLink(token));
+      } catch (err) {
+        result = unknownShareLinkInfo();
+        process.exitCode = 2;
+        console.error(
+          `Warning: share diagnostic failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+
+      if (opts.json) {
+        console.log(JSON.stringify(result));
+        return;
+      }
+      console.log(`Link status:      ${result.link_status}`);
+      console.log(`Access status:    ${result.access_status}`);
+      console.log(`Visibility:       ${formatNullable(result.visibility)}`);
+      console.log(`File:             ${formatNullable(result.document_path)}`);
+      console.log(`Space:            ${formatNullable(result.space_name)}`);
+      console.log(`Document status:  ${result.document_status}`);
+      console.log(`Role:             ${formatNullable(result.role)}`);
+      console.log(`Shared by:        ${formatNullable(result.shared_by)}`);
+      console.log(
+        `Expires:          ${
+          result.expires_at ??
+          (result.access_status === 'accessible' ? 'never' : 'unknown')
+        }`
+      );
+      console.log(`Folder:           ${formatNullable(result.is_folder)}`);
+      console.log(
+        `Space access:     ${formatNullable(result.has_space_access)}`
+      );
     });
 
   share
