@@ -241,6 +241,34 @@ Exit codes are `0` for `SYNCED`, `1` for definite `FAILED`, and `2` for
 not observe the state cycle and matching collaboration revision acknowledgement. Reread the
 range before deciding whether to retry; do not retry blindly.
 
+Every `--json` result includes `identity_resolved`. It is `false` with
+`unit_id: null` when the CLI could not resolve a canonical Sheet session, and
+`true` once `space_id`, `path`, and `unit_id` identify the canonical session or
+an existing operation—even when a later read, write, or confirmation phase
+fails.
+
+`failure_code` is a bounded machine value and never contains the raw upstream
+error. Callers should handle these groups:
+
+- Input/session: `authentication_required`, `sheet_arguments_invalid`,
+  `sheet_target_invalid`, `sheet_path_required`, `sheet_timeout_invalid`,
+  `sheet_range_invalid`, `sheet_write_invalid_values`
+- Authorization/transport: `collaboration_permission_denied`,
+  `sheet_write_forbidden`, `collaboration_timeout`,
+  `collaboration_unavailable`, `collaboration_conflict`, `initial_load_failed`
+- Read/write SDK: `sheet_read_failed`, `sheet_worksheet_not_found`,
+  `sheet_write_command_rejected`, `sheet_write_sdk_incompatible`,
+  `sheet_write_command_failed`
+- Operation/confirmation: `operation_begin_unconfirmed`,
+  `operation_range_unbound`, `sheet_identity_changed`,
+  `operation_execution_not_claimed`, `pending_timeout`,
+  `sync_confirmation_lost`, `sdk_rejected`, `interrupted_before_mutation`,
+  `interrupted_after_mutation`
+
+Resolution-time authentication and network failures retain their permission or
+transport code; only a genuinely invalid or missing target uses
+`sheet_target_invalid`.
+
 ### Manage
 
 ```bash

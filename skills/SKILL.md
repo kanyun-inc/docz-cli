@@ -213,6 +213,27 @@ npx docz-cli@latest sheet set <space>:<path.sheet.json> \
   `can_read` / `can_write`, not a client-declared role.
 - Treat `SYNCED`/exit 0 as confirmed, `FAILED`/exit 1 as definitely not
   applied, and `UNKNOWN`/exit 2 as possibly applied.
+- Every JSON result includes `identity_resolved`: `false` plus `unit_id: null`
+  means the canonical Sheet session was not resolved; `true` means
+  `space_id`/`path`/`unit_id` identify the canonical session or an existing
+  operation even if a later phase failed.
+- Handle bounded `failure_code` values by category: input/session
+  (`authentication_required`, `sheet_arguments_invalid`,
+  `sheet_target_invalid`, `sheet_path_required`, `sheet_timeout_invalid`,
+  `sheet_range_invalid`, `sheet_write_invalid_values`); authorization/transport
+  (`collaboration_permission_denied`, `sheet_write_forbidden`,
+  `collaboration_timeout`, `collaboration_unavailable`,
+  `collaboration_conflict`, `initial_load_failed`); read/write SDK
+  (`sheet_read_failed`, `sheet_worksheet_not_found`,
+  `sheet_write_command_rejected`, `sheet_write_sdk_incompatible`,
+  `sheet_write_command_failed`); and operation/confirmation
+  (`operation_begin_unconfirmed`, `operation_range_unbound`,
+  `sheet_identity_changed`, `operation_execution_not_claimed`,
+  `pending_timeout`, `sync_confirmation_lost`, `sdk_rejected`,
+  `interrupted_before_mutation`, `interrupted_after_mutation`).
+- Target-resolution authentication/network errors keep their permission or
+  transport code. Only an invalid or missing target is
+  `sheet_target_invalid`. Never branch on raw error text.
 - On `UNKNOWN`, preserve the request ID and reread the range before any retry.
   Never blindly replay a Sheet mutation.
 - The CLI confirms a write only after collaboration leaves `SYNCED`, the Univer

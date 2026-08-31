@@ -63,7 +63,7 @@ export function classifySheetFailure(
     return 'sheet_range_invalid';
   }
   if (
-    /offline|network|fetch failed|econn|socket|websocket|connection/.test(
+    /offline|network|fetch failed|failed to fetch|econn|socket|websocket|connection/.test(
       signature
     )
   ) {

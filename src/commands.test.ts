@@ -215,6 +215,54 @@ describe('Sheet machine output', () => {
     expect(JSON.stringify(result.output)).not.toContain(sensitive);
     expect(result.exitCode).toBe(1);
   });
+
+  it('preserves a target-resolution network failure as collaboration_unavailable', async () => {
+    server.use(http.get(`${BASE}/api/spaces`, () => HttpResponse.error()));
+    const result = await runSheetCommand(
+      [
+        'sheet',
+        'get',
+        '研发:Budget.sheet.json',
+        '--range',
+        'Sheet1!A1',
+        '--json',
+      ],
+      TOKEN
+    );
+    expect(result.output).toMatchObject({
+      outcome: 'FAILED',
+      phase: 'load',
+      identity_resolved: false,
+      failure_code: 'collaboration_unavailable',
+    });
+    expect(result.exitCode).toBe(1);
+  });
+
+  it('preserves target-resolution authorization failure as permission denied', async () => {
+    server.use(
+      http.get(`${BASE}/api/spaces`, () =>
+        HttpResponse.text('unauthorized', { status: 401 })
+      )
+    );
+    const result = await runSheetCommand(
+      [
+        'sheet',
+        'get',
+        '研发:Budget.sheet.json',
+        '--range',
+        'Sheet1!A1',
+        '--json',
+      ],
+      TOKEN
+    );
+    expect(result.output).toMatchObject({
+      outcome: 'FAILED',
+      phase: 'load',
+      identity_resolved: false,
+      failure_code: 'collaboration_permission_denied',
+    });
+    expect(result.exitCode).toBe(1);
+  });
 });
 
 // ---------------------------------------------------------------------------

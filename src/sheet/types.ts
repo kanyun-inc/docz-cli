@@ -44,6 +44,8 @@ export interface SheetCommandResult {
   space_id: string;
   path: string;
   unit_id: string;
+  /** A canonical Sheet session or existing operation identity was resolved. */
+  identity_resolved: true;
   collaboration_status: string;
   request_id?: string;
   operation_id?: string;

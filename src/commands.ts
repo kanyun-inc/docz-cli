@@ -651,6 +651,19 @@ export async function executeSheetGet(input: {
       failureCode: classifySheetLoadFailure(error),
     });
   }
+  if (!session.can_read) {
+    return {
+      outcome: 'FAILED',
+      phase: 'load',
+      space_id: session.space_id,
+      path: session.path,
+      unit_id: session.unit_id,
+      identity_resolved: true,
+      collaboration_status: 'NOT_STARTED',
+      range: input.range,
+      failure_code: 'collaboration_permission_denied',
+    };
+  }
   let sheet: OpenUniverSheet | undefined;
   let readStarted = false;
   let interrupted = false;
@@ -691,6 +704,7 @@ export async function executeSheetGet(input: {
       space_id: session.space_id,
       path: session.path,
       unit_id: session.unit_id,
+      identity_resolved: true,
       collaboration_status: collaborationStatus,
       range: input.range,
       values: sheet.read(parsed.sheetName, parsed.a1),
@@ -702,6 +716,7 @@ export async function executeSheetGet(input: {
       space_id: session.space_id,
       path: session.path,
       unit_id: session.unit_id,
+      identity_resolved: true,
       collaboration_status: sheet?.status() ?? 'UNAVAILABLE',
       range: input.range,
       failure_code: interrupted
@@ -792,6 +807,7 @@ export async function executeSheetSet(input: {
       space_id: session.space_id,
       path: session.path,
       unit_id: session.unit_id,
+      identity_resolved: true,
       collaboration_status: 'NOT_STARTED',
       range: normalizedRange,
       failure_code: 'sheet_write_forbidden',
@@ -819,6 +835,7 @@ export async function executeSheetSet(input: {
       space_id: session.space_id,
       path: session.path,
       unit_id: session.unit_id,
+      identity_resolved: true,
       collaboration_status: 'NOT_STARTED',
       request_id: requestId,
       range: normalizedRange,
@@ -832,6 +849,7 @@ export async function executeSheetSet(input: {
       space_id: session.space_id,
       path: session.path,
       unit_id: session.unit_id,
+      identity_resolved: true,
       collaboration_status: 'NOT_STARTED',
       request_id: requestId,
       range: normalizedRange,
@@ -870,6 +888,7 @@ export async function executeSheetSet(input: {
       space_id: operation.space_id,
       path: operation.file_path,
       unit_id: operation.unit_id,
+      identity_resolved: true,
       collaboration_status:
         operation.last_collaboration_status || 'NOT_REOPENED',
       request_id: requestId,
@@ -906,6 +925,7 @@ export async function executeSheetSet(input: {
       space_id: session.space_id,
       path: session.path,
       unit_id: session.unit_id,
+      identity_resolved: true,
       collaboration_status: 'NOT_STARTED',
       request_id: requestId,
       operation_id: operation.id,
@@ -920,6 +940,7 @@ export async function executeSheetSet(input: {
       space_id: session.space_id,
       path: session.path,
       unit_id: session.unit_id,
+      identity_resolved: true,
       collaboration_status: 'NOT_STARTED',
       request_id: requestId,
       operation_id: operation.id,
@@ -950,6 +971,7 @@ export async function executeSheetSet(input: {
       space_id: operation.space_id,
       path: operation.file_path,
       unit_id: operation.unit_id,
+      identity_resolved: true,
       collaboration_status: 'NOT_STARTED',
       request_id: requestId,
       operation_id: operation.id,
@@ -1044,6 +1066,7 @@ export async function executeSheetSet(input: {
       space_id: session.space_id,
       path: session.path,
       unit_id: session.unit_id,
+      identity_resolved: true,
       collaboration_status: collaborationStatus,
       request_id: requestId,
       operation_id: operation.id,
@@ -1101,6 +1124,7 @@ export async function executeSheetSet(input: {
       space_id: session.space_id,
       path: session.path,
       unit_id: session.unit_id,
+      identity_resolved: true,
       collaboration_status: collaborationStatus,
       request_id: requestId,
       operation_id: operation.id,

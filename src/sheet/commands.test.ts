@@ -82,8 +82,39 @@ describe('Sheet commands', () => {
       opener: vi.fn(async () => sheet),
     });
     expect(result.outcome).toBe('SYNCED');
+    expect(result.identity_resolved).toBe(true);
     expect(result.values).toEqual([[42]]);
     expect(sheet.dispose).toHaveBeenCalledOnce();
+  });
+
+  it('fails closed before opening Univer when the session denies reading', async () => {
+    const opener = vi.fn();
+    const result = await executeSheetGet({
+      client: fakeClient({
+        getSheetSession: vi.fn(async () => ({
+          ...session,
+          role: 'reader',
+          can_read: false,
+          can_write: false,
+        })),
+      }),
+      baseUrl: 'https://docz.example.com',
+      token: 'fake-token',
+      spaceId: 'space-1',
+      path: session.path,
+      range: 'Sheet1!A1',
+      clientVersion: 'test',
+      opener,
+    });
+    expect(result).toMatchObject({
+      outcome: 'FAILED',
+      phase: 'load',
+      unit_id: session.unit_id,
+      identity_resolved: true,
+      collaboration_status: 'NOT_STARTED',
+      failure_code: 'collaboration_permission_denied',
+    });
+    expect(opener).not.toHaveBeenCalled();
   });
 
   it('waits for deferred SDK cleanup before returning', async () => {
