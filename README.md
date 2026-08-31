@@ -132,7 +132,21 @@ docz-cli shortlink 闫洪康:AI-Coding技巧总结12.md
 docz-cli cat https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c
 docz-cli ls https://docz.zhenguanyu.com/s/yanfa
 docz-cli log https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c
+
+# A directory short URL can address a child below its canonical directory
+docz-cli cat https://docz.zhenguanyu.com/s/yanhongkang/f/DirectoryId/nested/guide.md
 ```
+
+`/s/{slug}/f/{fileId}/...` is always a stable-reference route. The `fileId`
+must resolve to a directory before a child path is accepted; invalid references,
+Space mismatches, file references with suffixes, and traversal-like child paths
+fail before the document operation. To access a literal Space-root path that
+starts with `f/`, use the unambiguous `space:f/...` form.
+
+For `upload`, the complete child path remains a destination directory, exactly
+like `space:dir`; the local basename is appended by the command. For `mv`, only
+the source accepts a URL and the destination remains a complete path relative
+to the Space root, not relative to the stable directory.
 
 ### Link Metadata
 
@@ -142,6 +156,7 @@ lifecycle and target document status are reported independently.
 ```bash
 # Ordinary stable/path/root/legacy links (authentication required)
 docz-cli link info https://docz.zhenguanyu.com/s/yanfa/f/NNjrcj8c
+docz-cli link info https://docz.zhenguanyu.com/s/yanfa/f/DirectoryId/nested/guide.md --json
 docz-cli link info https://docz.zhenguanyu.com/s/yanfa/docs/guide.md --json
 
 # Share token or URL (public shares can be inspected without a token)

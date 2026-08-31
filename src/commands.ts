@@ -195,7 +195,7 @@ async function resolveSlug(
 /**
  * Detect if input is a URL and resolve it to { spaceId, path }.
  * Supports:
- *   /s/{slug}/f/{fileId}         — short URL with fileId
+ *   /s/{slug}/f/{fileId}[/child] — stable URL with fileId
  *   /s/{slug}[/path/to/file]     — slug URL with optional path
  *   /spaces/{spaceId}[/path/...] — legacy URL
  * Returns null if not a recognized DocSync URL.
@@ -204,39 +204,45 @@ async function resolveUrl(
   client: DocSyncClient,
   input: string
 ): Promise<{ spaceId: string; path: string } | null> {
-  let pathname: string;
+  let target: NormalLinkTarget;
   try {
-    pathname = new URL(input).pathname;
-  } catch {
-    return null;
+    target = parseNormalLink(input);
+  } catch (err) {
+    if (
+      err instanceof Error &&
+      err.message.startsWith('Unrecognized ordinary Docz URL')
+    ) {
+      return null;
+    }
+    throw err;
   }
 
-  // /s/{slug}/f/{fileId}
-  const fileMatch = pathname.match(/^\/s\/([^/]+)\/f\/([^/]+)$/);
-  if (fileMatch) {
-    const [, slug, fileId] = fileMatch;
-    const space = await resolveSlug(client, slug);
-    const ref = await client.resolveFileRef(fileId);
-    return { spaceId: space.id, path: ref.path };
+  if (target.kind === 'file-ref') {
+    const space = await resolveSlug(client, target.slug);
+    const ref = await client.resolveFileRef(target.fileId);
+    if (space.id !== ref.space_id) {
+      throw new Error(
+        `Stable link Space mismatch: slug resolves to ${space.id}, but fileId belongs to ${ref.space_id}`
+      );
+    }
+    if (target.childPath && ref.is_dir !== true) {
+      throw new Error(
+        `Stable link child path requires a directory fileId: ${target.fileId}`
+      );
+    }
+    return {
+      spaceId: ref.space_id,
+      path: joinCanonicalPath(ref.path, target.childPath),
+    };
   }
 
-  // /s/{slug}[/path/to/file]
-  const slugMatch = pathname.match(/^\/s\/([^/]+)(\/.*)?$/);
-  if (slugMatch) {
-    const [, slug, rest] = slugMatch;
-    const space = await resolveSlug(client, slug);
-    const filePath = rest ? decodeURIComponent(rest.slice(1)) : '';
-    return { spaceId: space.id, path: filePath };
+  if (target.slug) {
+    const space = await resolveSlug(client, target.slug);
+    return { spaceId: space.id, path: target.path };
   }
-
-  // /spaces/{spaceId}[/path/to/file] (legacy)
-  const legacyMatch = pathname.match(/^\/spaces\/([^/]+)(\/.*)?$/);
-  if (legacyMatch) {
-    const [, spaceId, rest] = legacyMatch;
-    const filePath = rest ? decodeURIComponent(rest.slice(1)) : '';
-    return { spaceId, path: filePath };
+  if (target.spaceId) {
+    return { spaceId: target.spaceId, path: target.path };
   }
-
   return null;
 }
 
@@ -252,7 +258,7 @@ export async function resolveTarget(
     const result = await resolveUrl(client, first);
     if (result) return result;
     throw new Error(
-      `Unrecognized DocSync URL: ${first}\nExpected: /s/{slug}[/f/{fileId}], /s/{slug}[/path], or /spaces/{id}[/path]`
+      `Unrecognized DocSync URL: ${first}\nExpected: /s/{slug}/f/{fileId}[/child], /s/{slug}[/path], or /spaces/{id}[/path]`
     );
   }
   const { space, path } = parseTarget(args);
@@ -302,7 +308,7 @@ export type NormalLinkTarget =
       kind: 'file-ref';
       slug: string;
       fileId: string;
-      path: '';
+      childPath: string;
     }
   | {
       kind: 'path';
@@ -347,6 +353,61 @@ function decodePath(value: string): string {
   }
 }
 
+function getRawPathname(input: string): string {
+  const match = input.match(/^[a-zA-Z][a-zA-Z\d+.-]*:\/\/[^/?#]*(\/[^?#]*)?/);
+  return match?.[1] ?? '';
+}
+
+function decodeRouteSegment(value: string, label: string): string {
+  const decoded = decodePath(value);
+  if (
+    !decoded ||
+    decoded.includes('/') ||
+    decoded.includes('\\') ||
+    [...decoded].some((char) => {
+      const code = char.charCodeAt(0);
+      return code <= 0x1f || code === 0x7f;
+    })
+  ) {
+    throw new Error(`Invalid stable-link ${label}`);
+  }
+  return decoded;
+}
+
+function decodeStableChildPath(rawSegments: string[]): string {
+  if (rawSegments.length === 0) return '';
+  if (rawSegments.length === 1 && rawSegments[0] === '') return '';
+
+  return rawSegments
+    .map((rawSegment) => {
+      if (!rawSegment) {
+        throw new Error('Invalid stable-link child path: empty segment');
+      }
+      const segment = decodeRouteSegment(rawSegment, 'child path');
+      if (segment === '.' || segment === '..') {
+        throw new Error(
+          'Invalid stable-link child path: traversal segment is not allowed'
+        );
+      }
+      return segment;
+    })
+    .join('/');
+}
+
+function joinCanonicalPath(parentPath: string, childPath: string): string {
+  if (!parentPath) return childPath;
+  if (!childPath) return parentPath;
+  return `${parentPath}/${childPath}`;
+}
+
+function hasStableFileRoute(segments: string[]): boolean {
+  return (
+    segments.length >= 4 &&
+    decodePath(segments[0]) === 's' &&
+    decodePath(segments[2]) === 'f'
+  );
+}
+
 /** Parse a normal Docz URL without making a network request. */
 export function parseNormalLink(input: string): NormalLinkTarget {
   let pathname: string;
@@ -360,14 +421,21 @@ export function parseNormalLink(input: string): NormalLinkTarget {
     throw new Error('Share links must use `docz share info`');
   }
 
-  const fileMatch = pathname.match(/^\/s\/([^/]+)\/f\/([^/]+)\/?$/);
-  if (fileMatch) {
+  const rawSegments = getRawPathname(input).slice(1).split('/');
+  if (hasStableFileRoute(rawSegments)) {
     return {
       kind: 'file-ref',
-      slug: decodePath(fileMatch[1]),
-      fileId: decodePath(fileMatch[2]),
-      path: '',
+      slug: decodeRouteSegment(rawSegments[1], 'slug'),
+      fileId: decodeRouteSegment(rawSegments[3], 'fileId'),
+      childPath: decodeStableChildPath(rawSegments.slice(4)),
     };
+  }
+
+  const normalizedSegments = pathname.slice(1).split('/');
+  if (hasStableFileRoute(normalizedSegments)) {
+    throw new Error(
+      'Invalid stable-link URL path: route normalization is not allowed'
+    );
   }
 
   const slugMatch = pathname.match(/^\/s\/([^/]+)(\/.*)?$/);
@@ -389,7 +457,7 @@ export function parseNormalLink(input: string): NormalLinkTarget {
   }
 
   throw new Error(
-    'Unrecognized ordinary Docz URL. Expected /s/{slug}[/f/{fileId}], /s/{slug}[/path], or /spaces/{id}[/path]'
+    'Unrecognized ordinary Docz URL. Expected /s/{slug}/f/{fileId}[/child], /s/{slug}[/path], or /spaces/{id}[/path]'
   );
 }
 
@@ -428,6 +496,75 @@ export function mapNormalLinkInfo(diagnostic: LinkDiagnostic): NormalLinkInfo {
         : null,
     is_folder:
       typeof diagnostic.is_dir === 'boolean' ? diagnostic.is_dir : null,
+  };
+}
+
+export interface NormalLinkDiagnosis {
+  info: NormalLinkInfo;
+  warning?: string;
+}
+
+/** Diagnose an ordinary URL while preserving stable file-reference semantics. */
+export async function diagnoseNormalLinkTarget(
+  client: DocSyncClient,
+  target: NormalLinkTarget
+): Promise<NormalLinkDiagnosis> {
+  if (target.kind === 'path') {
+    return {
+      info: mapNormalLinkInfo(
+        await client.diagnosePath({
+          slug: target.slug,
+          spaceId: target.spaceId,
+          path: target.path,
+        })
+      ),
+    };
+  }
+
+  const parent = await client.diagnoseFileRef(target.fileId, target.slug);
+  if (!target.childPath) {
+    return { info: mapNormalLinkInfo(parent) };
+  }
+
+  const canResolveChild =
+    parent.link_valid &&
+    parent.space_exists &&
+    parent.has_space_access &&
+    parent.document_applicable &&
+    parent.document_exists &&
+    parent.is_dir === true &&
+    typeof parent.space_id === 'string' &&
+    typeof parent.path === 'string';
+  if (canResolveChild) {
+    const child = await client.diagnosePath({
+      spaceId: parent.space_id,
+      path: joinCanonicalPath(parent.path ?? '', target.childPath),
+    });
+    return { info: mapNormalLinkInfo(child) };
+  }
+
+  const parentInfo = mapNormalLinkInfo(parent);
+  const reason = !parent.link_valid
+    ? 'parent link is invalid'
+    : !parent.space_exists
+      ? 'parent Space does not exist'
+      : !parent.has_space_access
+        ? 'parent Space is inaccessible'
+        : !parent.document_applicable
+          ? 'parent is not a document target'
+          : !parent.document_exists
+            ? 'parent document does not exist'
+            : parent.is_dir !== true
+              ? 'parent is not a confirmed directory'
+              : 'parent response is missing canonical identity fields';
+  return {
+    info: {
+      ...parentInfo,
+      document_path: null,
+      document_status: 'unknown',
+      is_folder: null,
+    },
+    warning: `stable-link child target could not be resolved safely: ${reason}`,
   };
 }
 
@@ -1033,15 +1170,12 @@ export function registerCommands(program: Command): void {
       const client = getClient();
       let result: NormalLinkInfo;
       try {
-        const diagnostic =
-          target.kind === 'file-ref'
-            ? await client.diagnoseFileRef(target.fileId, target.slug)
-            : await client.diagnosePath({
-                slug: target.slug,
-                spaceId: target.spaceId,
-                path: target.path,
-              });
-        result = mapNormalLinkInfo(diagnostic);
+        const diagnosis = await diagnoseNormalLinkTarget(client, target);
+        result = diagnosis.info;
+        if (diagnosis.warning) {
+          process.exitCode = 1;
+          console.error(`Warning: ${diagnosis.warning}`);
+        }
       } catch (err) {
         result = unknownNormalLinkInfo();
         process.exitCode = 2;
