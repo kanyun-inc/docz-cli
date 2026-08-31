@@ -1,5 +1,6 @@
 export type SheetFailureCode =
   | 'authentication_required'
+  | 'sheet_arguments_invalid'
   | 'sheet_target_invalid'
   | 'sheet_path_required'
   | 'sheet_timeout_invalid'
