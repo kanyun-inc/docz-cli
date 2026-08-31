@@ -62,12 +62,14 @@ In both results, `link_status` is independent from `document_status`; an
 Supported DocSync URL formats:
 
 - **Short URL (fileId)**: `/s/{slug}/f/{fileId}` — resolves fileId to path via API
+- **Directory short URL child**: `/s/{slug}/f/{fileId}/path/to/child` — resolves the directory fileId first, then addresses a safe child below its canonical path
 - **Path URL**: `/s/{slug}/path/to/file.md` — file path in URL
 - **Space URL**: `/s/{slug}` — space root
 - **Legacy URL**: `/spaces/{spaceId}/path/to/file` — old format, still works
 
 ```bash
 npx docz-cli@latest cat https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c
+npx docz-cli@latest cat https://docz.zhenguanyu.com/s/yanhongkang/f/DirectoryId/nested/guide.md
 npx docz-cli@latest cat https://docz.zhenguanyu.com/s/yanfa/docs/guide.md
 npx docz-cli@latest ls https://docz.zhenguanyu.com/s/yanfa
 npx docz-cli@latest write https://docz.zhenguanyu.com/s/yanfa/docs/guide.md 'new content'
@@ -76,6 +78,19 @@ npx docz-cli@latest rm https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c
 npx docz-cli@latest diff https://docz.zhenguanyu.com/s/yanfa/docs/guide.md abc1234
 npx docz-cli@latest trash https://docz.zhenguanyu.com/s/yanfa
 ```
+
+Treat `/s/{slug}/f/...` as a reserved stable-reference route. Never reinterpret
+an invalid fileId route as a Space-root `f/...` path. A child suffix is valid
+only when the fileId is an accessible directory in the same Space and every
+decoded child segment is a safe relative name. Use `<space>:f/...` when the
+intended literal root path begins with `f/`. `link info` supports directory
+short-link children and reports the canonical child path after validating the
+parent reference.
+
+For `upload <local-file> <stable-directory-child>`, the whole resolved child is
+the upload directory and the local basename is preserved. For `mv`, resolve only
+the source URL; the destination argument is still a complete Space-root-relative
+path and is never relative to the stable directory.
 
 ## Commands
 
@@ -322,5 +337,5 @@ done | npx docz-cli@latest write G160-研发:full-report.md -
 - To embed images in a Markdown document, first run `image upload <file>` to get a permanent public URL, then write `![alt](url)` into the document. Images go to OSS (not the Space): no Space quota, and visible in share links / blogs without login. Supports png/jpg/webp, max 5MB.
 - After writing a file, use `shortlink` to get a clickable URL for the user.
 - Backend is Git: every write creates a commit. Use `log` to see history, `diff` to see changes.
-- Any DocSync URL can be pasted directly into any command. Supports short URLs (`/s/slug/f/fileId`), path URLs (`/s/slug/path/to/file`), and legacy URLs (`/spaces/id/path`).
+- Any DocSync URL can be pasted directly into any command. Supports short URLs (`/s/slug/f/fileId`), directory short-link children (`/s/slug/f/fileId/child`), path URLs (`/s/slug/path/to/file`), and legacy URLs (`/spaces/id/path`).
 - `--quote` creates a selection comment: the quoted text is highlighted in Web UI. The quote must be **plain text** (strip all Markdown formatting like `**`, `#`, `[]()`, `` ` `` before passing). Use 10+ characters to avoid ambiguous matches.

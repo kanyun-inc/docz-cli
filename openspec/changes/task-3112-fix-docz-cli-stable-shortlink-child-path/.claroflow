@@ -1,0 +1,67 @@
+{
+  "taskId": "3112",
+  "title": "修复 docz-cli 目录稳定短链子路径解析",
+  "storyId": "2194",
+  "env": "online",
+  "repo": "docz-cli",
+  "branch": "feature/task-3112-fix-docz-cli-stable-shortlink-child-path",
+  "assignee": {
+    "ldapUid": "yanhongkang",
+    "name": "闫洪康"
+  },
+  "repositories": [
+    {
+      "repoName": "docz-cli",
+      "branch": "feature/task-3112-fix-docz-cli-stable-shortlink-child-path"
+    }
+  ],
+  "prd": {
+    "syncedAt": "2026-08-31T19:37:30+08:00",
+    "doczLinks": []
+  },
+  "git": {
+    "repoUrl": "https://github.com/kanyun-inc/docz-cli",
+    "branch": "feature/task-3112-fix-docz-cli-stable-shortlink-child-path",
+    "branchUrl": "https://github.com/kanyun-inc/docz-cli/tree/feature/task-3112-fix-docz-cli-stable-shortlink-child-path",
+    "pushed": false
+  },
+  "docz": {
+    "basePath": "S160-技术:projects/[P-6] 平台支持/Epics/[E-4901523] [Auto] 修复 docz-cli 目录稳定短链子路径解析/[S-2194] 修复 docz-cli 目录稳定短链子路径解析/[T-3112] 修复 docz-cli 目录稳定短链子路径解析",
+    "baseUrl": "https://docz.zhenguanyu.com/s/rd/projects/[P-6] 平台支持/Epics/[E-4901523] [Auto] 修复 docz-cli 目录稳定短链子路径解析/[S-2194] 修复 docz-cli 目录稳定短链子路径解析/[T-3112] 修复 docz-cli 目录稳定短链子路径解析",
+    "lastSyncedAt": "2026-08-31T20:07:42+08:00",
+    "entries": [
+      {
+        "kind": "file",
+        "title": "proposal.md",
+        "url": "https://docz.zhenguanyu.com/s/rd/projects/[P-6] 平台支持/Epics/[E-4901523] [Auto] 修复 docz-cli 目录稳定短链子路径解析/[S-2194] 修复 docz-cli 目录稳定短链子路径解析/[T-3112] 修复 docz-cli 目录稳定短链子路径解析/proposal.md",
+        "knownId": "proposal",
+        "type": "proposal"
+      },
+      {
+        "kind": "folder",
+        "title": "specs",
+        "url": "https://docz.zhenguanyu.com/s/rd/projects/[P-6] 平台支持/Epics/[E-4901523] [Auto] 修复 docz-cli 目录稳定短链子路径解析/[S-2194] 修复 docz-cli 目录稳定短链子路径解析/[T-3112] 修复 docz-cli 目录稳定短链子路径解析/specs/",
+        "knownId": "specs",
+        "type": "spec"
+      },
+      {
+        "kind": "file",
+        "title": "design.md",
+        "url": "https://docz.zhenguanyu.com/s/rd/projects/[P-6] 平台支持/Epics/[E-4901523] [Auto] 修复 docz-cli 目录稳定短链子路径解析/[S-2194] 修复 docz-cli 目录稳定短链子路径解析/[T-3112] 修复 docz-cli 目录稳定短链子路径解析/design.md",
+        "knownId": "design",
+        "type": "design"
+      },
+      {
+        "kind": "file",
+        "title": "tasks.md",
+        "url": "https://docz.zhenguanyu.com/s/rd/projects/[P-6] 平台支持/Epics/[E-4901523] [Auto] 修复 docz-cli 目录稳定短链子路径解析/[S-2194] 修复 docz-cli 目录稳定短链子路径解析/[T-3112] 修复 docz-cli 目录稳定短链子路径解析/tasks.md",
+        "knownId": "tasks",
+        "type": "tasks"
+      }
+    ]
+  },
+  "lifecycle": {
+    "lastState": "coding",
+    "lastTransitionAt": "2026-08-31T19:46:57+08:00"
+  }
+}
