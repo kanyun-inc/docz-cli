@@ -176,7 +176,9 @@ export interface DiffSummary {
 export interface FileRef {
   id: string;
   space_id: string;
+  slug: string;
   path: string;
+  is_dir: boolean;
 }
 
 export interface CatResult {

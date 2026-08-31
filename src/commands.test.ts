@@ -16,6 +16,7 @@ import {
 import { DocSyncClient, MoveError } from './client.js';
 import {
   describeMoveFailure,
+  diagnoseNormalLinkTarget,
   IMAGE_MAX_SIZE,
   mapNormalLinkInfo,
   mapShareLinkInfo,
@@ -63,7 +64,9 @@ const mockSpaces = [
 const mockFileRef = {
   id: 'NNjrcj8c',
   space_id: 'space-priv',
+  slug: 'yanhongkang',
   path: 'docs/guide.md',
+  is_dir: false,
 };
 
 const mockFullTree = [
@@ -85,11 +88,21 @@ const server = setupServer(
 
   http.get(`${BASE}/api/file-refs/:fileId`, ({ params }) => {
     if (params.fileId === 'NNjrcj8c') return HttpResponse.json(mockFileRef);
+    if (params.fileId === 'DIR12345')
+      return HttpResponse.json({
+        id: 'DIR12345',
+        space_id: 'space-priv',
+        slug: 'yanhongkang',
+        path: 'docs',
+        is_dir: true,
+      });
     if (params.fileId === 'Hs8uQNNl')
       return HttpResponse.json({
         id: 'Hs8uQNNl',
         space_id: 'space-priv',
+        slug: 'yanhongkang',
         path: 'AI-Coding技巧总结-摘要.md',
+        is_dir: false,
       });
     return HttpResponse.text('not found', { status: 404 });
   }),
@@ -373,7 +386,7 @@ describe('parseNormalLink', () => {
       kind: 'file-ref',
       slug: 'yanfa',
       fileId: 'NNjrcj8c',
-      path: '',
+      childPath: '',
     });
     expect(
       parseNormalLink(
@@ -397,6 +410,56 @@ describe('parseNormalLink', () => {
       path: 'docs',
     });
   });
+
+  it('parses a stable directory child path without query or fragment', () => {
+    expect(
+      parseNormalLink(
+        'https://docz.example.com/s/yanhongkang/f/DIR12345/%E5%AD%90%E7%9B%AE%E5%BD%95/guide.md?view=file#intro'
+      )
+    ).toEqual({
+      kind: 'file-ref',
+      slug: 'yanhongkang',
+      fileId: 'DIR12345',
+      childPath: '子目录/guide.md',
+    });
+    expect(
+      parseNormalLink('https://docz.example.com/s/yanhongkang/f/DIR12345/')
+    ).toMatchObject({ kind: 'file-ref', childPath: '' });
+  });
+
+  it.each([
+    'https://docz.example.com/s/yanhongkang/f/DIR12345//guide.md',
+    'https://docz.example.com/s/yanhongkang/f/DIR12345/guide.md/',
+    'https://docz.example.com/s/yanhongkang/f/DIR12345/./guide.md',
+    'https://docz.example.com/s/yanhongkang/f/DIR12345/../guide.md',
+    'https://docz.example.com/s/yanhongkang/f/DIR12345/%2e%2e/guide.md',
+    'https://docz.example.com/s/yanhongkang/f/DIR12345/a%2Fb.md',
+    'https://docz.example.com/s/yanhongkang/f/DIR12345/a%5Cb.md',
+    'https://docz.example.com/s/yanhongkang/f/DIR12345/a%00b.md',
+  ])('rejects an unsafe stable-link child path: %s', (url) => {
+    expect(() => parseNormalLink(url)).toThrow('stable-link child path');
+  });
+
+  it('does not fall back to an ordinary path for invalid stable routes', () => {
+    expect(() =>
+      parseNormalLink('https://docz.example.com/s/yanhongkang/f//guide.md')
+    ).toThrow('stable-link fileId');
+    expect(() =>
+      parseNormalLink('https://docz.example.com/s/yanhongkang/%66//guide.md')
+    ).toThrow('stable-link fileId');
+  });
+
+  it.each([
+    'https://docz.example.com/x/../s/yanhongkang/f/DIR12345/child.md',
+    'https://docz.example.com/x/%2e%2e/s/yanhongkang/f/DIR12345/child.md',
+  ])(
+    'does not fall back when normalization exposes a stable route: %s',
+    (url) => {
+      expect(() => parseNormalLink(url)).toThrow(
+        'Invalid stable-link URL path: route normalization is not allowed'
+      );
+    }
+  );
 
   it('rejects share and unknown URLs', () => {
     expect(() =>
@@ -555,6 +618,181 @@ describe('link metadata mapping', () => {
   });
 });
 
+describe('stable child link diagnostics', () => {
+  const client = new DocSyncClient(BASE, TOKEN);
+  const childUrl =
+    'https://docz.example.com/s/yanhongkang/f/DIR12345/nested/child.md';
+  const accessibleDirectory = {
+    link_valid: true,
+    space_exists: true,
+    has_space_access: true,
+    document_applicable: true,
+    document_exists: true,
+    id: 'DIR12345',
+    space_id: 'space-priv',
+    slug: 'yanhongkang',
+    path: 'docs',
+    is_dir: true,
+    owner_name: '管理员',
+    owner_email: 'owner@example.com',
+  };
+
+  it('diagnoses the canonical child path', async () => {
+    server.use(
+      http.get(`${BASE}/api/file-refs/:fileId/diagnostic`, () =>
+        HttpResponse.json(accessibleDirectory)
+      ),
+      http.get(`${BASE}/api/link-diagnostics/path`, ({ request }) => {
+        const url = new URL(request.url);
+        expect(url.searchParams.get('space_id')).toBe('space-priv');
+        expect(url.searchParams.get('path')).toBe('docs/nested/child.md');
+        return HttpResponse.json({
+          link_valid: true,
+          space_exists: true,
+          has_space_access: true,
+          document_applicable: true,
+          document_exists: true,
+          space_id: 'space-priv',
+          path: 'docs/nested/child.md',
+          is_dir: false,
+        });
+      })
+    );
+
+    const result = await diagnoseNormalLinkTarget(
+      client,
+      parseNormalLink(childUrl)
+    );
+    expect(result).toEqual({
+      info: {
+        link_type: 'normal',
+        link_status: 'valid',
+        space_permission: 'accessible',
+        document_path: '/docs/nested/child.md',
+        document_status: 'exists',
+        space_admin: null,
+        is_folder: false,
+      },
+    });
+  });
+
+  it('keeps a canonical missing child valid and reports not_found', async () => {
+    server.use(
+      http.get(`${BASE}/api/file-refs/:fileId/diagnostic`, () =>
+        HttpResponse.json(accessibleDirectory)
+      ),
+      http.get(`${BASE}/api/link-diagnostics/path`, () =>
+        HttpResponse.json({
+          link_valid: true,
+          space_exists: true,
+          has_space_access: true,
+          document_applicable: true,
+          document_exists: false,
+          space_id: 'space-priv',
+          path: 'docs/nested/child.md',
+        })
+      )
+    );
+
+    const result = await diagnoseNormalLinkTarget(
+      client,
+      parseNormalLink(childUrl)
+    );
+    expect(result.info).toMatchObject({
+      link_status: 'valid',
+      document_path: '/docs/nested/child.md',
+      document_status: 'not_found',
+    });
+  });
+
+  it.each([
+    [
+      'invalid',
+      {
+        ...accessibleDirectory,
+        link_valid: false,
+        space_exists: false,
+        has_space_access: false,
+      },
+    ],
+    [
+      'inaccessible',
+      { ...accessibleDirectory, has_space_access: false, path: undefined },
+    ],
+    [
+      'deleted',
+      { ...accessibleDirectory, document_exists: false, path: undefined },
+    ],
+    ['non-directory', { ...accessibleDirectory, is_dir: false }],
+    ['missing directory type', { ...accessibleDirectory, is_dir: undefined }],
+  ])(
+    'does not issue a child diagnostic when the parent is %s',
+    async (_label, parent) => {
+      let childDiagnosticRequests = 0;
+      server.use(
+        http.get(`${BASE}/api/file-refs/:fileId/diagnostic`, () =>
+          HttpResponse.json(parent)
+        ),
+        http.get(`${BASE}/api/link-diagnostics/path`, () => {
+          childDiagnosticRequests += 1;
+          return HttpResponse.json({});
+        })
+      );
+
+      const result = await diagnoseNormalLinkTarget(
+        client,
+        parseNormalLink(childUrl)
+      );
+      expect(childDiagnosticRequests).toBe(0);
+      expect(result.warning).toContain('could not be resolved safely');
+      expect(result.info).toMatchObject({
+        document_path: null,
+        document_status: 'unknown',
+        is_folder: null,
+      });
+    }
+  );
+
+  it('powers link info --json with the canonical child result', async () => {
+    server.use(
+      http.get(`${BASE}/api/file-refs/:fileId/diagnostic`, () =>
+        HttpResponse.json(accessibleDirectory)
+      ),
+      http.get(`${BASE}/api/link-diagnostics/path`, () =>
+        HttpResponse.json({
+          link_valid: true,
+          space_exists: true,
+          has_space_access: true,
+          document_applicable: true,
+          document_exists: true,
+          space_id: 'space-priv',
+          path: 'docs/nested/child.md',
+          is_dir: false,
+        })
+      )
+    );
+    vi.stubEnv('DOCSYNC_BASE_URL', BASE);
+    vi.stubEnv('DOCSYNC_API_TOKEN', TOKEN);
+    Reflect.set(globalThis, '__VERSION__', 'test');
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((message?: unknown) => {
+      lines.push(String(message));
+    });
+
+    const program = new Command().exitOverride();
+    registerCommands(program);
+    await program.parseAsync(['link', 'info', childUrl, '--json'], {
+      from: 'user',
+    });
+
+    expect(JSON.parse(lines.at(-1) ?? '{}')).toMatchObject({
+      document_path: '/docs/nested/child.md',
+      document_status: 'exists',
+    });
+    expect(process.exitCode).toBeUndefined();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // resolveTarget — short URL support
 // ---------------------------------------------------------------------------
@@ -613,6 +851,70 @@ describe('resolveTarget', () => {
       ])
     ).rejects.toThrow();
   });
+
+  it('resolves a stable directory child below the canonical path', async () => {
+    const result = await resolveTarget(client, [
+      'https://docz.zhenguanyu.com/s/yanhongkang/f/DIR12345/nested/%E6%96%87%E6%A1%A3.md',
+    ]);
+    expect(result).toEqual({
+      spaceId: 'space-priv',
+      path: 'docs/nested/文档.md',
+    });
+  });
+
+  it('rejects a child path when the fileId points to a file', async () => {
+    await expect(
+      resolveTarget(client, [
+        'https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c/child.md',
+      ])
+    ).rejects.toThrow('requires a directory fileId');
+  });
+
+  it('rejects a slug and fileId Space mismatch', async () => {
+    await expect(
+      resolveTarget(client, [
+        'https://docz.zhenguanyu.com/s/yanfa/f/DIR12345/child.md',
+      ])
+    ).rejects.toThrow('Stable link Space mismatch');
+  });
+
+  it('does not make a path request after stable parent resolution fails', async () => {
+    let pathRequests = 0;
+    server.use(
+      http.all(`${BASE}/api/spaces/:spaceId/*`, () => {
+        pathRequests += 1;
+        return HttpResponse.json({});
+      })
+    );
+
+    await expect(
+      resolveTarget(client, [
+        'https://docz.zhenguanyu.com/s/yanhongkang/f/BADID/child.md',
+      ])
+    ).rejects.toThrow();
+    expect(pathRequests).toBe(0);
+  });
+
+  it.each([
+    'https://docz.zhenguanyu.com/x/../s/yanhongkang/f/DIR12345/child.md',
+    'https://docz.zhenguanyu.com/x/%2e%2e/s/yanhongkang/f/DIR12345/child.md',
+  ])(
+    'fails closed before network access when normalization exposes a stable route: %s',
+    async (url) => {
+      let requests = 0;
+      server.use(
+        http.all('*', () => {
+          requests += 1;
+          return HttpResponse.json({});
+        })
+      );
+
+      await expect(resolveTarget(client, [url])).rejects.toThrow(
+        'Invalid stable-link URL path: route normalization is not allowed'
+      );
+      expect(requests).toBe(0);
+    }
+  );
 
   // --- slug URL: /s/{slug}[/path] ---
   it('resolves /s/{slug} (space root)', async () => {
@@ -740,6 +1042,102 @@ describe('resolveTarget', () => {
   });
 });
 
+describe('stable child URL command integration', () => {
+  it('passes canonical child paths to read and mutation APIs', async () => {
+    const seen: Array<{
+      operation: string;
+      path: string;
+      destination?: string;
+    }> = [];
+    server.use(
+      http.get(`${BASE}/api/spaces/space-priv/blob/*`, ({ request }) => {
+        seen.push({
+          operation: 'cat',
+          path: decodeURIComponent(new URL(request.url).pathname).replace(
+            '/api/spaces/space-priv/blob/',
+            ''
+          ),
+        });
+        return HttpResponse.text('content');
+      }),
+      http.post(
+        `${BASE}/api/spaces/space-priv/files/save`,
+        async ({ request }) => {
+          const body = (await request.json()) as { path: string };
+          seen.push({ operation: 'write', path: body.path });
+          return HttpResponse.json({ path: body.path, ref: 'save-ref' });
+        }
+      ),
+      http.post(
+        `${BASE}/api/spaces/space-priv/files/mkdir`,
+        async ({ request }) => {
+          const body = (await request.json()) as { path: string };
+          seen.push({ operation: 'mkdir', path: body.path });
+          return HttpResponse.json({});
+        }
+      ),
+      http.post(
+        `${BASE}/api/spaces/space-priv/files/rename`,
+        async ({ request }) => {
+          const body = (await request.json()) as {
+            old_path: string;
+            new_path: string;
+          };
+          seen.push({
+            operation: 'mv',
+            path: body.old_path,
+            destination: body.new_path,
+          });
+          return HttpResponse.json({});
+        }
+      ),
+      http.post(
+        `${BASE}/api/spaces/space-priv/files/upload`,
+        async ({ request }) => {
+          const form = await request.formData();
+          seen.push({ operation: 'upload', path: String(form.get('path')) });
+          return HttpResponse.json({ path: 'docs/nested/uploads/upload.md' });
+        }
+      )
+    );
+    vi.stubEnv('DOCSYNC_BASE_URL', BASE);
+    vi.stubEnv('DOCSYNC_API_TOKEN', TOKEN);
+    Reflect.set(globalThis, '__VERSION__', 'test');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+
+    const run = async (args: string[]) => {
+      const program = new Command().exitOverride();
+      registerCommands(program);
+      await program.parseAsync(args, { from: 'user' });
+    };
+    const stableChild = (path: string) =>
+      `https://docz.example.com/s/yanhongkang/f/DIR12345/${path}`;
+    const uploadDir = mkdtempSync(join(tmpdir(), 'docz-upload-'));
+    const uploadFile = join(uploadDir, 'upload.md');
+    writeFileSync(uploadFile, 'upload content');
+
+    await run(['cat', stableChild('nested/read.md')]);
+    await run(['write', stableChild('nested/write.md'), 'body', '--force']);
+    await run(['mkdir', stableChild('nested/new-dir')]);
+    await run(['mv', stableChild('nested/source.md'), 'archive/result.md']);
+    await run(['upload', uploadFile, stableChild('nested/uploads')]);
+
+    expect(seen).toEqual([
+      { operation: 'cat', path: 'docs/nested/read.md' },
+      { operation: 'write', path: 'docs/nested/write.md' },
+      { operation: 'mkdir', path: 'docs/nested/new-dir' },
+      {
+        operation: 'mv',
+        path: 'docs/nested/source.md',
+        destination: 'archive/result.md',
+      },
+      { operation: 'upload', path: 'docs/nested/uploads' },
+    ]);
+    expect(seen.some((request) => request.path.startsWith('f/'))).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // resolveSpaceArg — space-only commands with URL support
 // ---------------------------------------------------------------------------
@@ -763,6 +1161,23 @@ describe('resolveSpaceArg', () => {
       'https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c'
     );
     expect(s.id).toBe('space-priv');
+  });
+
+  it('resolves a directory stable child through the canonical resolver', async () => {
+    const s = await resolveSpaceArg(
+      client,
+      'https://docz.zhenguanyu.com/s/yanhongkang/f/DIR12345/child.md'
+    );
+    expect(s.id).toBe('space-priv');
+  });
+
+  it('fails closed for a file stable link with a child suffix', async () => {
+    await expect(
+      resolveSpaceArg(
+        client,
+        'https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c/child.md'
+      )
+    ).rejects.toThrow('requires a directory fileId');
   });
 
   it('extracts space from /s/{slug} URL', async () => {
