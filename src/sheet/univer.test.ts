@@ -3,6 +3,7 @@ import { CollaborationStatus } from '@univerjs-pro/collaboration-client';
 import { describe, expect, it, vi } from 'vitest';
 import {
   closePendingCollaborationSocket,
+  forceUniverSilentLogging,
   runDeferredCleanup,
   SHEET_UNIVER_LOG_LEVEL,
   sheetSocketEventForVendor,
@@ -14,6 +15,18 @@ import {
 describe('Univer logging', () => {
   it('keeps vendor transport logs disabled to protect credentials', () => {
     expect(SHEET_UNIVER_LOG_LEVEL).toBe(LogLevel.SILENT);
+  });
+
+  it('applies numeric-zero SILENT explicitly for Univer 0.21.1', () => {
+    const setLogLevel = vi.fn();
+    const univer = {
+      __getInjector: () => ({
+        get: () => ({ setLogLevel }),
+      }),
+    };
+    forceUniverSilentLogging(univer as never);
+    expect(setLogLevel).toHaveBeenCalledOnce();
+    expect(setLogLevel).toHaveBeenCalledWith(LogLevel.SILENT);
   });
 
   it('removes request headers from WebSocket errors before vendor logging', () => {

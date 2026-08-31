@@ -7,6 +7,7 @@ import {
   Disposable,
   IAuthzIoService,
   ICommandService,
+  ILogService,
   IMentionIOService,
   Injector,
   IUndoRedoService,
@@ -47,6 +48,14 @@ import type { OpenSheetOptions, OpenUniverSheet } from './types.js';
 // logs collaboration failures. The CLI already reports bounded failure codes,
 // so vendor logging must stay disabled to avoid credential disclosure.
 export const SHEET_UNIVER_LOG_LEVEL = LogLevel.SILENT;
+
+// Univer 0.21.1 checks `if (logLevel)` during construction. SILENT is numeric
+// zero, so the config value is accidentally ignored and the service stays at
+// INFO. Apply it explicitly through the public log-service contract while the
+// dependency remains pinned to this vendor version.
+export function forceUniverSilentLogging(univer: Univer): void {
+  univer.__getInjector().get(ILogService).setLogLevel(SHEET_UNIVER_LOG_LEVEL);
+}
 
 export function validateUniverEndpoint(raw: string, doczBaseUrl: string): URL {
   let endpoint: URL;
@@ -379,6 +388,7 @@ export async function openUniverSheet(
       [IMentionIOService, null],
     ],
   });
+  forceUniverSilentLogging(univer);
   univer.registerPlugin(UniverNetworkPlugin);
   univer.registerPlugin(UniverFormulaEnginePlugin);
   univer.registerPlugin(UniverSheetsPlugin);
