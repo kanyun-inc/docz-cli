@@ -32,4 +32,4 @@
 ## 6. 流程收尾
 
 - [x] 6.1 将最终 OpenSpec artifact 增量同步到 Docz 并回写 Claroflow Task 3112。
-- [ ] 6.2 提交并按受控方式推送 feature 分支，将 Task 3112 流转到 `dev_done`，记录本地门禁和 test-uts 证据；不发布生产版本。
+- [x] 6.2 提交并按受控方式推送 feature 分支，将 Task 3112 流转到 `dev_done`，记录本地门禁和 test-uts 证据；不发布生产版本。
