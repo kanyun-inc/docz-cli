@@ -353,6 +353,18 @@ describe('parseNormalLink', () => {
     ).toThrow('stable-link fileId');
   });
 
+  it.each([
+    'https://docz.example.com/x/../s/yanhongkang/f/DIR12345/child.md',
+    'https://docz.example.com/x/%2e%2e/s/yanhongkang/f/DIR12345/child.md',
+  ])(
+    'does not fall back when normalization exposes a stable route: %s',
+    (url) => {
+      expect(() => parseNormalLink(url)).toThrow(
+        'Invalid stable-link URL path: route normalization is not allowed'
+      );
+    }
+  );
+
   it('rejects share and unknown URLs', () => {
     expect(() =>
       parseNormalLink('https://docz.example.com/share/token')
@@ -725,6 +737,27 @@ describe('resolveTarget', () => {
     ).rejects.toThrow();
     expect(pathRequests).toBe(0);
   });
+
+  it.each([
+    'https://docz.zhenguanyu.com/x/../s/yanhongkang/f/DIR12345/child.md',
+    'https://docz.zhenguanyu.com/x/%2e%2e/s/yanhongkang/f/DIR12345/child.md',
+  ])(
+    'fails closed before network access when normalization exposes a stable route: %s',
+    async (url) => {
+      let requests = 0;
+      server.use(
+        http.all('*', () => {
+          requests += 1;
+          return HttpResponse.json({});
+        })
+      );
+
+      await expect(resolveTarget(client, [url])).rejects.toThrow(
+        'Invalid stable-link URL path: route normalization is not allowed'
+      );
+      expect(requests).toBe(0);
+    }
+  );
 
   // --- slug URL: /s/{slug}[/path] ---
   it('resolves /s/{slug} (space root)', async () => {

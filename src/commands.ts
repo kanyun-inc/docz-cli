@@ -400,6 +400,14 @@ function joinCanonicalPath(parentPath: string, childPath: string): string {
   return `${parentPath}/${childPath}`;
 }
 
+function hasStableFileRoute(segments: string[]): boolean {
+  return (
+    segments.length >= 4 &&
+    decodePath(segments[0]) === 's' &&
+    decodePath(segments[2]) === 'f'
+  );
+}
+
 /** Parse a normal Docz URL without making a network request. */
 export function parseNormalLink(input: string): NormalLinkTarget {
   let pathname: string;
@@ -414,17 +422,20 @@ export function parseNormalLink(input: string): NormalLinkTarget {
   }
 
   const rawSegments = getRawPathname(input).slice(1).split('/');
-  if (
-    rawSegments.length >= 4 &&
-    decodePath(rawSegments[0]) === 's' &&
-    decodePath(rawSegments[2]) === 'f'
-  ) {
+  if (hasStableFileRoute(rawSegments)) {
     return {
       kind: 'file-ref',
       slug: decodeRouteSegment(rawSegments[1], 'slug'),
       fileId: decodeRouteSegment(rawSegments[3], 'fileId'),
       childPath: decodeStableChildPath(rawSegments.slice(4)),
     };
+  }
+
+  const normalizedSegments = pathname.slice(1).split('/');
+  if (hasStableFileRoute(normalizedSegments)) {
+    throw new Error(
+      'Invalid stable-link URL path: route normalization is not allowed'
+    );
   }
 
   const slugMatch = pathname.match(/^\/s\/([^/]+)(\/.*)?$/);
