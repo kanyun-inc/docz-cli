@@ -87,6 +87,22 @@ function websocketPath(endpoint: URL, path: string): string {
   return ws.toString();
 }
 
+// ws ErrorEvent.target retains the entire ClientRequest, including raw
+// Authorization headers. Univer logs the event object on reconnect failures
+// even at SILENT level, so never expose the transport event to vendor code.
+// Collaboration only needs an error signal; a bounded browser-like event is
+// sufficient and preserves the reconnect/offline state machine.
+export function sheetSocketEventForVendor(
+  eventName: 'open' | 'close' | 'error' | 'message',
+  event: unknown
+): unknown {
+  if (eventName !== 'error') return event;
+  return {
+    type: 'error',
+    message: 'Docz Sheet WebSocket transport error.',
+  };
+}
+
 function createSheetNodeSocketService(headers: Record<string, string>) {
   return class SheetNodeSocketService
     extends Disposable
@@ -109,7 +125,10 @@ function createSheetNodeSocketService(headers: Record<string, string>) {
 
       const observe = (eventName: 'open' | 'close' | 'error' | 'message') =>
         new Observable<never>((subscriber) => {
-          const listener = (event: unknown) => subscriber.next(event as never);
+          const listener = (event: unknown) =>
+            subscriber.next(
+              sheetSocketEventForVendor(eventName, event) as never
+            );
           // Univer's collaboration layer consumes browser-compatible event
           // objects (`message.data`). ws exposes those through EventTarget;
           // EventEmitter's `message` callback would pass only the raw payload.
@@ -226,7 +245,8 @@ export async function waitUntil(
   timeoutMs: number,
   subscribe: (listener: (value: CollaborationStatus) => void) => {
     dispose(): void;
-  }
+  },
+  signal?: AbortSignal
 ): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     let settled = false;
@@ -237,12 +257,15 @@ export async function waitUntil(
     let recheckTimer: ReturnType<typeof setTimeout> | undefined;
     let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
     let subscription: { dispose(): void } | undefined;
+    const onAbort = () =>
+      finish(new Error('Univer collaboration synchronization interrupted.'));
     let recheckDelayMs = INITIAL_STATUS_RECHECK_DELAY_MS;
 
     const cleanup = () => {
       subscription?.dispose();
       if (recheckTimer) clearTimeout(recheckTimer);
       if (timeoutTimer) clearTimeout(timeoutTimer);
+      signal?.removeEventListener('abort', onAbort);
     };
     const finish = (result: string | Error) => {
       if (settled) return;
@@ -274,6 +297,18 @@ export async function waitUntil(
     };
 
     subscription = subscribe(evaluate);
+    // Some adapters synchronously emit the current state from subscribe(). If
+    // that settles the wait before assignment, dispose the newly returned
+    // subscription immediately instead of leaving it attached.
+    if (settled) {
+      subscription.dispose();
+      return;
+    }
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
     timeoutTimer = setTimeout(
       () =>
         finish(new Error('Univer collaboration synchronization timed out.')),
@@ -454,17 +489,19 @@ export async function openUniverSheet(
       status: () => statusName(currentStatus()),
       revision: () =>
         revisionService.getCurrentRevOfUnit(options.session.unit_id),
-      waitForInitialSync: (timeoutMs = 20_000) =>
+      waitForInitialSync: (timeoutMs = 20_000, signal?: AbortSignal) =>
         waitUntil(
           currentStatus,
           (value) => value === CollaborationStatus.SYNCED,
           timeoutMs,
-          subscribeStatus
+          subscribeStatus,
+          signal
         ),
       waitForWriteSync: (
         timeoutMs = 20_000,
         mutationStarted = () => true,
-        mutationApplied = () => true
+        mutationApplied = () => true,
+        signal?: AbortSignal
       ) => {
         const startRevision = revisionService.getCurrentRevOfUnit(
           options.session.unit_id
@@ -485,7 +522,8 @@ export async function openUniverSheet(
             );
           },
           timeoutMs,
-          subscribeStatus
+          subscribeStatus,
+          signal
         );
       },
       dispose,

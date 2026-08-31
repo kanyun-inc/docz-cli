@@ -99,11 +99,12 @@ export interface OpenUniverSheet {
   ): void | Promise<void>;
   status(): string;
   revision(): number;
-  waitForInitialSync(timeoutMs?: number): Promise<string>;
+  waitForInitialSync(timeoutMs?: number, signal?: AbortSignal): Promise<string>;
   waitForWriteSync(
     timeoutMs?: number,
     mutationStarted?: () => boolean,
-    mutationApplied?: () => boolean
+    mutationApplied?: () => boolean,
+    signal?: AbortSignal
   ): Promise<string>;
   dispose(): Promise<void>;
 }

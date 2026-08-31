@@ -653,15 +653,37 @@ export async function executeSheetGet(input: {
   }
   let sheet: OpenUniverSheet | undefined;
   let readStarted = false;
+  let interrupted = false;
+  const interruptController = new AbortController();
+  const onSignal = () => {
+    interrupted = true;
+    interruptController.abort();
+    void sheet?.dispose();
+  };
+  process.once('SIGINT', onSignal);
+  process.once('SIGTERM', onSignal);
   try {
-    sheet = await (input.opener ?? lazyOpenUniverSheet)({
+    const opening = (input.opener ?? lazyOpenUniverSheet)({
       session,
       doczBaseUrl: input.baseUrl,
       token: input.token,
       clientVersion: input.clientVersion,
       timeoutMs,
+      signal: interruptController.signal,
     });
-    const collaborationStatus = await sheet.waitForInitialSync(timeoutMs);
+    try {
+      sheet = await withSheetAbort(opening, interruptController.signal);
+    } catch (error) {
+      if (interruptController.signal.aborted) {
+        void opening.then((opened) => opened.dispose()).catch(() => undefined);
+      }
+      throw error;
+    }
+    const collaborationStatus = await withSheetAbort(
+      sheet.waitForInitialSync(timeoutMs, interruptController.signal),
+      interruptController.signal
+    );
+    if (interrupted) throw new Error('Sheet command was interrupted.');
     readStarted = true;
     return {
       outcome: 'SYNCED',
@@ -682,9 +704,13 @@ export async function executeSheetGet(input: {
       unit_id: session.unit_id,
       collaboration_status: sheet?.status() ?? 'UNAVAILABLE',
       range: input.range,
-      failure_code: classifySheetFailure(error, 'sheet_read_failed'),
+      failure_code: interrupted
+        ? 'interrupted_before_mutation'
+        : classifySheetFailure(error, 'sheet_read_failed'),
     };
   } finally {
+    process.removeListener('SIGINT', onSignal);
+    process.removeListener('SIGTERM', onSignal);
     await sheet?.dispose();
   }
 }
@@ -966,7 +992,8 @@ export async function executeSheetSet(input: {
     if (interrupted) throw new Error('Sheet command was interrupted.');
     await withSheetAbort(
       sheet.waitForInitialSync(
-        operationPhaseTimeout(timeoutMs, operation.deadline_at)
+        operationPhaseTimeout(timeoutMs, operation.deadline_at),
+        interruptController.signal
       ),
       interruptController.signal
     );
@@ -981,7 +1008,8 @@ export async function executeSheetSet(input: {
     const writeSync = sheet.waitForWriteSync(
       operationPhaseTimeout(timeoutMs, operation.deadline_at),
       () => mutationMayHaveBeenSent,
-      () => mutationApplied
+      () => mutationApplied,
+      interruptController.signal
     );
     // If the SDK rejects the local write, this observer is intentionally left
     // to settle during teardown/timeout. Attach a bounded sink immediately so

@@ -5,6 +5,7 @@ import {
   closePendingCollaborationSocket,
   runDeferredCleanup,
   SHEET_UNIVER_LOG_LEVEL,
+  sheetSocketEventForVendor,
   validateUniverEndpoint,
   waitUntil,
   withUniverTimeout,
@@ -13,6 +14,30 @@ import {
 describe('Univer logging', () => {
   it('keeps vendor transport logs disabled to protect credentials', () => {
     expect(SHEET_UNIVER_LOG_LEVEL).toBe(LogLevel.SILENT);
+  });
+
+  it('removes request headers from WebSocket errors before vendor logging', () => {
+    const secret = 'unique-sheet-token-must-not-leak';
+    const rawEvent = {
+      type: 'error',
+      target: {
+        _req: {
+          _header: `Authorization: Bearer ${secret}`,
+        },
+      },
+    };
+    const safeEvent = sheetSocketEventForVendor('error', rawEvent);
+    expect(safeEvent).not.toBe(rawEvent);
+    expect(JSON.stringify(safeEvent)).not.toContain(secret);
+    expect(safeEvent).toEqual({
+      type: 'error',
+      message: 'Docz Sheet WebSocket transport error.',
+    });
+  });
+
+  it('keeps non-error socket events unchanged', () => {
+    const message = { data: 'safe-payload' };
+    expect(sheetSocketEventForVendor('message', message)).toBe(message);
   });
 });
 
@@ -103,6 +128,29 @@ describe('Univer collaboration status wait', () => {
     listener?.(CollaborationStatus.PENDING);
     listener?.(CollaborationStatus.OFFLINE);
     await expect(waiting).rejects.toThrow('offline');
+  });
+
+  it('aborts immediately and disposes status observers and timers', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const dispose = vi.fn();
+    const status = vi.fn(() => CollaborationStatus.PENDING);
+    const waiting = waitUntil(
+      status,
+      () => false,
+      30_000,
+      () => ({ dispose }),
+      controller.signal
+    );
+
+    controller.abort();
+    await expect(waiting).rejects.toThrow('interrupted');
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+    const callsAfterAbort = status.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(status).toHaveBeenCalledTimes(callsAfterAbort);
+    vi.useRealTimers();
   });
 
   it('does not accept SYNCED until state cycles and revision advances', async () => {

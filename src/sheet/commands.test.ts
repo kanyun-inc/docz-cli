@@ -112,6 +112,37 @@ describe('Sheet commands', () => {
     expect(cleaned).toBe(true);
   });
 
+  it('aborts an in-flight read opener on SIGINT and removes listeners', async () => {
+    const sigintListeners = process.listenerCount('SIGINT');
+    const sigtermListeners = process.listenerCount('SIGTERM');
+    const opener = vi.fn(async (options: OpenSheetOptions) => {
+      return new Promise<OpenUniverSheet>((_resolve, reject) => {
+        options.signal?.addEventListener(
+          'abort',
+          () => reject(new Error('opening interrupted')),
+          { once: true }
+        );
+        queueMicrotask(() => process.emit('SIGINT', 'SIGINT'));
+      });
+    });
+    const result = await executeSheetGet({
+      client: fakeClient(),
+      baseUrl: 'https://docz.example.com',
+      token: 'fake-token',
+      spaceId: 'space-1',
+      path: session.path,
+      range: 'Sheet1!A1',
+      clientVersion: 'test',
+      opener,
+    });
+    expect(result).toMatchObject({
+      outcome: 'FAILED',
+      failure_code: 'interrupted_before_mutation',
+    });
+    expect(process.listenerCount('SIGINT')).toBe(sigintListeners);
+    expect(process.listenerCount('SIGTERM')).toBe(sigtermListeners);
+  });
+
   it('returns a bounded read diagnostic without exposing the SDK message', async () => {
     const sensitive = 'wss://docz.example.com/comb?sessionTicket=never-log';
     const sheet = fakeSheet({
@@ -900,11 +931,15 @@ describe('Sheet commands', () => {
       opener,
     });
     expect(openedTimeout).toBeLessThanOrEqual(3_000);
-    expect(sheet.waitForInitialSync).toHaveBeenCalledWith(expect.any(Number));
+    expect(sheet.waitForInitialSync).toHaveBeenCalledWith(
+      expect.any(Number),
+      expect.any(AbortSignal)
+    );
     expect(sheet.waitForWriteSync).toHaveBeenCalledWith(
       expect.any(Number),
       expect.any(Function),
-      expect.any(Function)
+      expect.any(Function),
+      expect.any(AbortSignal)
     );
   });
 });
