@@ -290,9 +290,11 @@ export async function waitUntil(
 
 export async function withUniverTimeout<T>(
   promise: Promise<T>,
-  timeoutMs: number
+  timeoutMs: number,
+  signal?: AbortSignal
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(
       () => reject(new Error('Univer Sheet load timed out.')),
@@ -300,16 +302,23 @@ export async function withUniverTimeout<T>(
     );
     timer.unref?.();
   });
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(new Error('Univer Sheet load was interrupted.'));
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener('abort', onAbort, { once: true });
+  });
   try {
-    return await Promise.race([promise, timeout]);
+    return await Promise.race([promise, timeout, aborted]);
   } finally {
     if (timer) clearTimeout(timer);
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
   }
 }
 
 export async function openUniverSheet(
   options: OpenSheetOptions
 ): Promise<OpenUniverSheet> {
+  options.signal?.throwIfAborted();
   const endpoint = validateUniverEndpoint(
     options.session.univer_endpoint,
     options.doczBaseUrl
@@ -397,7 +406,8 @@ export async function openUniverSheet(
     const collaboration = univerAPI.getCollaboration();
     const workbook = await withUniverTimeout(
       collaboration.loadSheetAsync(options.session.unit_id),
-      options.timeoutMs ?? 20_000
+      options.timeoutMs ?? 20_000,
+      options.signal
     );
     if (!workbook) throw new Error('Univer Sheet was not found.');
     const currentStatus = () =>

@@ -817,7 +817,7 @@ describe('resolveTarget', () => {
     expect(result.path).toBe('AI-Coding技巧总结-摘要.md');
   });
 
-  it('uses the canonical file-ref Space after a cross-Space move', async () => {
+  it('rejects an old stable link after a cross-Space move', async () => {
     server.use(
       http.get(`${BASE}/api/file-refs/:fileId`, () =>
         HttpResponse.json({
@@ -827,13 +827,11 @@ describe('resolveTarget', () => {
         })
       )
     );
-    const result = await resolveTarget(client, [
-      'https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c',
-    ]);
-    expect(result).toEqual({
-      spaceId: 'space-after-move',
-      path: 'moved/Budget.sheet.json',
-    });
+    await expect(
+      resolveTarget(client, [
+        'https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c',
+      ])
+    ).rejects.toThrow('Stable link Space mismatch');
   });
 
   it('strips #fragment from fileId in short URL', async () => {

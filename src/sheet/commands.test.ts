@@ -423,6 +423,104 @@ describe('Sheet commands', () => {
     expect(JSON.stringify(result)).not.toContain(sensitive);
   });
 
+  it('keeps a pre-mutation failure FAILED when audit confirmation is lost', async () => {
+    const opener = vi.fn(async () => {
+      throw new Error('initial load failed');
+    });
+    const result = await executeSheetSet({
+      client: fakeClient({
+        finalizeSheetOperation: vi.fn(async () => {
+          throw new Error('finalize response lost');
+        }),
+        getSheetOperation: vi.fn(async () => {
+          throw new Error('audit query unavailable');
+        }),
+      }),
+      baseUrl: 'https://docz.example.com',
+      token: 'fake-token',
+      spaceId: 'space-1',
+      path: session.path,
+      range: 'Sheet1!A1',
+      valuesJson: '[[1]]',
+      clientVersion: 'test',
+      requestId: 'request-audit-unconfirmed',
+      opener,
+    });
+    expect(result).toMatchObject({
+      outcome: 'FAILED',
+      failure_code: 'initial_load_failed',
+    });
+    expect(result.warning).toContain('audit finalization was not confirmed');
+  });
+
+  it('aborts an in-flight opener on SIGINT before mutation and removes listeners', async () => {
+    const sigintListeners = process.listenerCount('SIGINT');
+    const sigtermListeners = process.listenerCount('SIGTERM');
+    const opener = vi.fn(async (options: OpenSheetOptions) => {
+      return new Promise<OpenUniverSheet>((_resolve, reject) => {
+        options.signal?.addEventListener(
+          'abort',
+          () => reject(new Error('opening interrupted')),
+          { once: true }
+        );
+        queueMicrotask(() => process.emit('SIGINT', 'SIGINT'));
+      });
+    });
+    const result = await executeSheetSet({
+      client: fakeClient({
+        finalizeSheetOperation: vi.fn(async () => operation('FAILED')),
+      }),
+      baseUrl: 'https://docz.example.com',
+      token: 'fake-token',
+      spaceId: 'space-1',
+      path: session.path,
+      range: 'Sheet1!A1',
+      valuesJson: '[[1]]',
+      clientVersion: 'test',
+      requestId: 'request-interrupted-before-open',
+      opener,
+    });
+    expect(result).toMatchObject({
+      outcome: 'FAILED',
+      failure_code: 'interrupted_before_mutation',
+    });
+    expect(process.listenerCount('SIGINT')).toBe(sigintListeners);
+    expect(process.listenerCount('SIGTERM')).toBe(sigtermListeners);
+  });
+
+  it('reports UNKNOWN when SIGTERM arrives after mutation may have been sent', async () => {
+    const sigintListeners = process.listenerCount('SIGINT');
+    const sigtermListeners = process.listenerCount('SIGTERM');
+    const sheet = fakeSheet({
+      write: vi.fn(async (_sheetName, _a1, _values, markMutation) => {
+        markMutation?.();
+        process.emit('SIGTERM', 'SIGTERM');
+        throw new Error('write interrupted');
+      }),
+    });
+    const result = await executeSheetSet({
+      client: fakeClient({
+        finalizeSheetOperation: vi.fn(async () => operation('UNKNOWN')),
+      }),
+      baseUrl: 'https://docz.example.com',
+      token: 'fake-token',
+      spaceId: 'space-1',
+      path: session.path,
+      range: 'Sheet1!A1',
+      valuesJson: '[[1]]',
+      clientVersion: 'test',
+      requestId: 'request-interrupted-after-mutation',
+      opener: vi.fn(async () => sheet),
+    });
+    expect(result).toMatchObject({
+      outcome: 'UNKNOWN',
+      failure_code: 'interrupted_after_mutation',
+    });
+    expect(result.warning).toContain('reread');
+    expect(process.listenerCount('SIGINT')).toBe(sigintListeners);
+    expect(process.listenerCount('SIGTERM')).toBe(sigtermListeners);
+  });
+
   it('does not repeat a mutation when request id already has a terminal outcome', async () => {
     const opener = vi.fn();
     const result = await executeSheetSet({

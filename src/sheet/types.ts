@@ -86,6 +86,7 @@ export interface OpenSheetOptions {
   token: string;
   clientVersion: string;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export interface OpenUniverSheet {

@@ -54,6 +54,17 @@ describe('Univer load timeout', () => {
     expect(clear).toHaveBeenCalledOnce();
     clear.mockRestore();
   });
+
+  it('rejects an in-flight load when the command is interrupted', async () => {
+    const controller = new AbortController();
+    const waiting = withUniverTimeout(
+      new Promise<never>(() => undefined),
+      20_000,
+      controller.signal
+    );
+    controller.abort();
+    await expect(waiting).rejects.toThrow('interrupted');
+  });
 });
 
 describe('Univer collaboration status wait', () => {

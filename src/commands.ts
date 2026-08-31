@@ -97,6 +97,23 @@ function sheetRequestSignal(timeoutMs: number): AbortSignal {
   return AbortSignal.timeout(Math.max(1, Math.floor(timeoutMs)));
 }
 
+async function withSheetAbort<T>(
+  promise: Promise<T>,
+  signal: AbortSignal
+): Promise<T> {
+  if (signal.aborted) throw new Error('Sheet command was interrupted.');
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(new Error('Sheet command was interrupted.'));
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([promise, aborted]);
+  } finally {
+    if (onAbort) signal.removeEventListener('abort', onAbort);
+  }
+}
+
 function getClient(): DocSyncClient {
   const token = getToken();
   if (!token) {
@@ -920,23 +937,38 @@ export async function executeSheetSet(input: {
   let mutationMayHaveBeenSent = false;
   let writeStarted = false;
   let interrupted = false;
+  const interruptController = new AbortController();
   const onSignal = () => {
     interrupted = true;
+    interruptController.abort();
     void sheet?.dispose();
   };
   process.once('SIGINT', onSignal);
   process.once('SIGTERM', onSignal);
 
   try {
-    sheet = await (input.opener ?? lazyOpenUniverSheet)({
+    const opening = (input.opener ?? lazyOpenUniverSheet)({
       session,
       doczBaseUrl: input.baseUrl,
       token: input.token,
       clientVersion: input.clientVersion,
       timeoutMs: operationPhaseTimeout(timeoutMs, operation.deadline_at),
+      signal: interruptController.signal,
     });
-    await sheet.waitForInitialSync(
-      operationPhaseTimeout(timeoutMs, operation.deadline_at)
+    try {
+      sheet = await withSheetAbort(opening, interruptController.signal);
+    } catch (error) {
+      if (interruptController.signal.aborted) {
+        void opening.then((opened) => opened.dispose()).catch(() => undefined);
+      }
+      throw error;
+    }
+    if (interrupted) throw new Error('Sheet command was interrupted.');
+    await withSheetAbort(
+      sheet.waitForInitialSync(
+        operationPhaseTimeout(timeoutMs, operation.deadline_at)
+      ),
+      interruptController.signal
     );
     if (interrupted) throw new Error('interrupted');
     const startRevision = sheet.revision();
@@ -960,7 +992,10 @@ export async function executeSheetSet(input: {
       mutationMayHaveBeenSent = true;
     });
     mutationApplied = true;
-    const collaborationStatus = await writeSync;
+    const collaborationStatus = await withSheetAbort(
+      writeSync,
+      interruptController.signal
+    );
     const endRevision = sheet.revision();
     const revisionVerified = endRevision > startRevision;
     const outcome = await confirmSheetOperation(input.client, {
@@ -1011,7 +1046,7 @@ export async function executeSheetSet(input: {
     const requestedOutcome: SheetOutcome = mutationOutcomeUnknown
       ? 'UNKNOWN'
       : 'FAILED';
-    const outcome = await confirmSheetOperation(input.client, {
+    const confirmedOutcome = await confirmSheetOperation(input.client, {
       spaceId: session.space_id,
       operationId: operation.id,
       requestId,
@@ -1021,9 +1056,15 @@ export async function executeSheetSet(input: {
       deadlineAt: operation.deadline_at,
       timeoutMs,
     });
+    const outcome = mutationOutcomeUnknown
+      ? confirmedOutcome === 'FAILED'
+        ? 'UNKNOWN'
+        : confirmedOutcome
+      : 'FAILED';
+    const auditConfirmationUncertain =
+      !mutationOutcomeUnknown && confirmedOutcome !== 'FAILED';
     return {
-      outcome:
-        mutationOutcomeUnknown && outcome === 'FAILED' ? 'UNKNOWN' : outcome,
+      outcome,
       phase: mutationOutcomeUnknown
         ? 'confirm'
         : writeStarted
@@ -1042,7 +1083,12 @@ export async function executeSheetSet(input: {
             warning:
               'Write may have been sent; reread the range before retrying.',
           }
-        : {}),
+        : auditConfirmationUncertain
+          ? {
+              warning:
+                'No Sheet mutation was sent, but audit finalization was not confirmed; inspect the operation before retrying.',
+            }
+          : {}),
     };
   } finally {
     process.removeListener('SIGINT', onSignal);
