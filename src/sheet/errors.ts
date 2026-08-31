@@ -17,6 +17,8 @@ export type SheetFailureCode =
   | 'operation_execution_not_claimed'
   | 'interrupted_after_mutation'
   | 'interrupted_before_mutation'
+  // Operation codes accepted and returned by the server for typed inbound
+  // responses. The current CLI does not emit them when finalizing an operation.
   | 'pending_timeout'
   | 'sync_confirmation_lost'
   | 'sdk_rejected';

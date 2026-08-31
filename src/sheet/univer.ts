@@ -218,16 +218,16 @@ function statusName(status: CollaborationStatus): string {
   return String(status).toUpperCase();
 }
 
+const INITIAL_STATUS_RECHECK_DELAY_MS = 25;
+
 export async function waitUntil(
   status: () => CollaborationStatus,
-  predicate: (value: CollaborationStatus, elapsedMs: number) => boolean,
+  predicate: (value: CollaborationStatus) => boolean,
   timeoutMs: number,
   subscribe: (listener: (value: CollaborationStatus) => void) => {
     dispose(): void;
-  },
-  recheckAfterMs?: number
+  }
 ): Promise<string> {
-  const started = Date.now();
   return new Promise<string>((resolve, reject) => {
     let settled = false;
     // Univer reports OFFLINE briefly while loadSheetAsync finishes installing
@@ -237,7 +237,7 @@ export async function waitUntil(
     let recheckTimer: ReturnType<typeof setTimeout> | undefined;
     let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
     let subscription: { dispose(): void } | undefined;
-    let recheckDelayMs = recheckAfterMs ?? 25;
+    let recheckDelayMs = INITIAL_STATUS_RECHECK_DELAY_MS;
 
     const cleanup = () => {
       subscription?.dispose();
@@ -254,7 +254,7 @@ export async function waitUntil(
     const evaluate = (current: CollaborationStatus) => {
       if (settled) return;
       if (current !== CollaborationStatus.OFFLINE) sawNonOffline = true;
-      if (predicate(current, Date.now() - started)) {
+      if (predicate(current)) {
         finish(statusName(current));
       } else if (current === CollaborationStatus.CONFLICT) {
         finish(new Error('Univer collaboration conflict.'));

@@ -713,7 +713,6 @@ export class DocSyncClient {
     path: string;
     requestId: string;
     clientVersion: string;
-    startRevision?: number;
     signal?: AbortSignal;
   }): Promise<SheetOperation> {
     return this.request(`/api/spaces/${input.spaceId}/sheets/operations`, {
@@ -725,7 +724,6 @@ export class DocSyncClient {
         request_id: input.requestId,
         operation: 'set',
         client_version: input.clientVersion,
-        start_revision: input.startRevision,
       }),
     });
   }

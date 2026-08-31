@@ -336,6 +336,48 @@ describe('link metadata mapping', () => {
     });
   });
 
+  it('aligns every human-readable value to the same column', async () => {
+    server.use(
+      http.get(`${BASE}/api/file-refs/:fileId/diagnostic`, () =>
+        HttpResponse.json({
+          link_valid: true,
+          space_exists: true,
+          has_space_access: true,
+          document_applicable: true,
+          document_exists: true,
+          path: 'Budget.sheet.json',
+          is_dir: false,
+          owner_name: '管理员',
+          owner_email: 'owner@example.com',
+        })
+      )
+    );
+    vi.stubEnv('DOCSYNC_BASE_URL', BASE);
+    vi.stubEnv('DOCSYNC_API_TOKEN', TOKEN);
+    Reflect.set(globalThis, '__VERSION__', 'test');
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((message?: unknown) => {
+      lines.push(String(message));
+    });
+
+    const program = new Command().exitOverride();
+    registerCommands(program);
+    await program.parseAsync(
+      ['link', 'info', 'https://docz.example.com/s/yanfa/f/NNjrcj8c'],
+      { from: 'user' }
+    );
+
+    expect(lines).toEqual([
+      'Link type:        normal',
+      'Link status:      valid',
+      'Space permission: accessible',
+      'Document path:    /Budget.sheet.json',
+      'Document status:  exists',
+      'Space admin:      管理员 <owner@example.com>',
+      'Folder:           false',
+    ]);
+  });
+
   it('marks a space root as not applicable document and folder', () => {
     expect(
       mapNormalLinkInfo({

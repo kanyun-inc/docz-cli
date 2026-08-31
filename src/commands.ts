@@ -1548,18 +1548,18 @@ export function registerCommands(program: Command): void {
       console.log(`Link type:        ${result.link_type}`);
       console.log(`Link status:      ${result.link_status}`);
       console.log(`Space permission: ${result.space_permission}`);
-      console.log(`Document path:     ${formatNullable(result.document_path)}`);
-      console.log(`Document status:   ${result.document_status}`);
+      console.log(`Document path:    ${formatNullable(result.document_path)}`);
+      console.log(`Document status:  ${result.document_status}`);
       const admin = result.space_admin;
       console.log(
-        `Space admin:       ${
+        `Space admin:      ${
           admin
             ? [admin.name, admin.email].filter(Boolean).join(' <') +
               (admin.name && admin.email ? '>' : '')
             : 'unknown'
         }`
       );
-      console.log(`Folder:            ${formatNullable(result.is_folder)}`);
+      console.log(`Folder:           ${formatNullable(result.is_folder)}`);
     });
 
   // --- share ---

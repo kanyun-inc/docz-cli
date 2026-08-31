@@ -480,6 +480,46 @@ afterAll(() => server.close());
 describe('DocSyncClient', () => {
   const c = new DocSyncClient(BASE, TOKEN);
 
+  it('beginSheetOperation() sends only begin-phase fields', async () => {
+    let receivedBody: unknown;
+    server.use(
+      http.post(
+        `${BASE}/api/spaces/:sid/sheets/operations`,
+        async ({ request }) => {
+          receivedBody = await request.json();
+          return HttpResponse.json({
+            id: 'operation-1',
+            request_id: 'request-1',
+            user_id: 'user-1',
+            space_id: SID,
+            file_ref_id: 'file-ref-1',
+            file_path: 'Budget.sheet.json',
+            unit_id: 'unit-1',
+            client_type: 'docz-cli',
+            client_version: 'test',
+            operation: 'set',
+            outcome: 'PENDING',
+            deadline_at: '2026-08-31T16:00:00Z',
+          });
+        }
+      )
+    );
+
+    await c.beginSheetOperation({
+      spaceId: SID,
+      path: 'Budget.sheet.json',
+      requestId: 'request-1',
+      clientVersion: 'test',
+    });
+
+    expect(receivedBody).toEqual({
+      path: 'Budget.sheet.json',
+      request_id: 'request-1',
+      operation: 'set',
+      client_version: 'test',
+    });
+  });
+
   it('me() returns user', async () => {
     const u = await c.me();
     expect(u.name).toBe('测试用户');
