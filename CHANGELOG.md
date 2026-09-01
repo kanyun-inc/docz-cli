@@ -1,5 +1,15 @@
 # docz-cli
 
+## 0.12.0
+
+### Minor Changes
+
+- 8158bf7: Add live Univer Sheet range reads and writes with canonical Docz path resolution, role-aware access, and explicit SYNCED, FAILED, and UNKNOWN outcomes.
+
+### Patch Changes
+
+- 5955018: Resolve directory stable-link child paths from the fileId's canonical directory and fail closed instead of falling back to a Space-root `f/...` path.
+
 ## 0.11.1
 
 ### Patch Changes
