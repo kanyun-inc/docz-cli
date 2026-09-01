@@ -1,7 +1,7 @@
 ---
 name: docz
 description: Read, write, collaboratively edit, and safely search local synchronized copies of company DocSync documents. Triggers on "docs", "documents", "upload file", "read space", "docz", "DocSync", "save file", "rollback", "restore", "trash", "version history", "comment", "share link", "diff", "collab", "collaborative editing", "local sync", "sync root", "bulk document search", "Neovim"
-version: 0.16.0
+version: 0.17.0
 author: kris
 tags:
   - docsync
@@ -9,7 +9,7 @@ tags:
   - file-sync
   - knowledge
 user-invocable: true
-argument-hint: "spaces | whoami | ls/cat/write/upload/mkdir/mv/rm/log/rollback/trash/restore/shortlink/diff | link info | local root | collab cat/write/publish/bridge | comment <subcmd> | share <subcmd>"
+argument-hint: "spaces | whoami | ls/cat/write/upload/mkdir/mv/rm/log/rollback/trash/restore/shortlink/diff | link info | local root | sheet get/set | collab cat/write/publish/bridge | comment <subcmd> | share <subcmd>"
 allowed-tools: Bash(*)
 ---
 
@@ -191,6 +191,54 @@ For collaborative edits that need to write back, always use normal `collab cat` 
 - `collab cat`, `collab write`, and `collab publish` are short-lived commands: they open a WebSocket, finish the operation, then close it automatically.
 - `collab bridge` is long-lived. It opens a realtime room and keeps the WebSocket alive until `close`, stdin EOF, or process exit.
 - There is no CLI-side idle auto-close for bridge. If a test or editor integration needs "edit, wait 10 seconds, then close", the bridge caller must send `close` after waiting.
+
+### Univer Sheet Collaboration
+
+Univer Sheets use a separate OT collaboration path from text-document
+`collab`. Never read or overwrite the `.sheet.json` descriptor as cell data.
+
+```bash
+npx docz-cli@latest sheet get <space>:<path.sheet.json> \
+  --range 'Sheet1!A1:B2' --json
+npx docz-cli@latest sheet set <space>:<path.sheet.json> \
+  --range 'Sheet1!A1:B2' --values-json '[[1,2],[3,4]]' \
+  --request-id '<uuid>' --timeout 30000 --json
+```
+
+- `sheet get` is available to owner/member/viewer with read access.
+- `sheet set` is available to owner/member only. Its values must be a
+  rectangular two-dimensional JSON matrix matching the range.
+- The session API maps Docz roles to Univer roles as owner -> owner,
+  member -> editor, and viewer -> reader; authorization still comes from
+  `can_read` / `can_write`, not a client-declared role.
+- Treat `SYNCED`/exit 0 as confirmed, `FAILED`/exit 1 as definitely not
+  applied, and `UNKNOWN`/exit 2 as possibly applied.
+- Every JSON result includes `identity_resolved`: `false` plus `unit_id: null`
+  means the canonical Sheet session was not resolved; `true` means
+  `space_id`/`path`/`unit_id` identify the canonical session or an existing
+  operation even if a later phase failed.
+- Handle bounded `failure_code` values by category: input/session
+  (`authentication_required`, `sheet_arguments_invalid`,
+  `sheet_target_invalid`, `sheet_path_required`, `sheet_timeout_invalid`,
+  `sheet_range_invalid`, `sheet_write_invalid_values`); authorization/transport
+  (`collaboration_permission_denied`, `sheet_write_forbidden`,
+  `collaboration_timeout`, `collaboration_unavailable`,
+  `collaboration_conflict`, `initial_load_failed`); read/write SDK
+  (`sheet_read_failed`, `sheet_worksheet_not_found`,
+  `sheet_write_command_rejected`, `sheet_write_sdk_incompatible`,
+  `sheet_write_command_failed`); and operation/confirmation
+  (`operation_begin_unconfirmed`, `operation_range_unbound`,
+  `sheet_identity_changed`, `operation_execution_not_claimed`,
+  `pending_timeout`, `sync_confirmation_lost`, `sdk_rejected`,
+  `interrupted_before_mutation`, `interrupted_after_mutation`).
+- Target-resolution authentication/network errors keep their permission or
+  transport code. Only an invalid or missing target is
+  `sheet_target_invalid`. Never branch on raw error text.
+- On `UNKNOWN`, preserve the request ID and reread the range before any retry.
+  Never blindly replay a Sheet mutation.
+- The CLI confirms a write only after collaboration leaves `SYNCED`, the Univer
+  revision advances, and state returns to `SYNCED`; Git metadata is not the confirmation
+  source.
 
 ### Version Management
 

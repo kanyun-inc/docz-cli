@@ -5,6 +5,13 @@
  * 认证：Authorization: Bearer {token}（支持 JWT 和永久 API Token）。
  */
 
+import type { SheetFailureCode } from './sheet/errors.js';
+import type {
+  SheetOperation,
+  SheetOutcome,
+  SheetSession,
+} from './sheet/types.js';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -239,6 +246,17 @@ export class ConflictError extends Error {
   }
 }
 
+export class DocSyncHTTPError extends Error {
+  constructor(
+    public readonly status: number,
+    statusText: string,
+    body: string
+  ) {
+    super(`${status} ${statusText}: ${body}`.trim());
+    this.name = 'DocSyncHTTPError';
+  }
+}
+
 export interface MoveErrorDetail {
   error: string;
   message: string;
@@ -291,7 +309,7 @@ export class DocSyncClient {
 
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      throw new Error(`${res.status} ${res.statusText}: ${body}`.trim());
+      throw new DocSyncHTTPError(res.status, res.statusText, body);
     }
 
     const ct = res.headers.get('content-type') ?? '';
@@ -310,7 +328,7 @@ export class DocSyncClient {
 
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      throw new Error(`${res.status} ${res.statusText}: ${body}`.trim());
+      throw new DocSyncHTTPError(res.status, res.statusText, body);
     }
 
     return res.text();
@@ -689,6 +707,80 @@ export class DocSyncClient {
 
   async getSharedFileInfo(token: string): Promise<ShareFileInfo> {
     return this.request(`/api/share/${token}/info`);
+  }
+
+  // --- Univer Sheet collaboration ---
+  async getSheetSession(
+    spaceId: string,
+    path: string,
+    signal?: AbortSignal
+  ): Promise<SheetSession> {
+    return this.request(
+      `/api/spaces/${spaceId}/sheets/session?path=${encodeURIComponent(path)}`,
+      { signal }
+    );
+  }
+
+  async beginSheetOperation(input: {
+    spaceId: string;
+    path: string;
+    range: string;
+    requestId: string;
+    clientVersion: string;
+    signal?: AbortSignal;
+  }): Promise<SheetOperation> {
+    return this.request(`/api/spaces/${input.spaceId}/sheets/operations`, {
+      method: 'POST',
+      signal: input.signal,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        path: input.path,
+        range: input.range,
+        request_id: input.requestId,
+        operation: 'set',
+        client_version: input.clientVersion,
+      }),
+    });
+  }
+
+  async finalizeSheetOperation(input: {
+    spaceId: string;
+    operationId: string;
+    outcome: SheetOutcome;
+    collaborationStatus: string;
+    failureCode?: SheetFailureCode;
+    startRevision?: number;
+    endRevision?: number;
+    revisionVerified?: boolean;
+    signal?: AbortSignal;
+  }): Promise<SheetOperation> {
+    return this.request(
+      `/api/spaces/${input.spaceId}/sheets/operations/${encodeURIComponent(input.operationId)}`,
+      {
+        method: 'PATCH',
+        signal: input.signal,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          outcome: input.outcome,
+          collaboration_status: input.collaborationStatus,
+          failure_code: input.failureCode ?? '',
+          start_revision: input.startRevision,
+          end_revision: input.endRevision,
+          revision_verified: input.revisionVerified ?? false,
+        }),
+      }
+    );
+  }
+
+  async getSheetOperation(
+    spaceId: string,
+    requestId: string,
+    signal?: AbortSignal
+  ): Promise<SheetOperation> {
+    return this.request(
+      `/api/spaces/${spaceId}/sheets/operations/by-request/${encodeURIComponent(requestId)}`,
+      { signal }
+    );
   }
 
   async inspectShareLink(token: string): Promise<ShareLinkInspection> {

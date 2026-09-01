@@ -38,6 +38,7 @@ import {
 const BASE = 'https://docz.test.com';
 const TOKEN = 'test-token';
 const SID = 'space-abc';
+const originalExitCode = process.exitCode;
 
 const mockSpaces = [
   {
@@ -117,9 +118,152 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   Reflect.deleteProperty(globalThis, '__VERSION__');
-  process.exitCode = undefined;
+  process.exitCode = originalExitCode;
 });
 afterAll(() => server.close());
+
+// ---------------------------------------------------------------------------
+// Sheet machine output
+// ---------------------------------------------------------------------------
+
+async function runSheetCommand(
+  args: string[],
+  token?: string
+): Promise<{
+  output: Record<string, unknown>;
+  exitCode: string | number | null | undefined;
+}> {
+  vi.stubEnv('DOCSYNC_BASE_URL', BASE);
+  vi.stubEnv('DOCSYNC_API_TOKEN', token ?? '');
+  Reflect.set(globalThis, '__VERSION__', 'test');
+  const lines: string[] = [];
+  vi.spyOn(console, 'log').mockImplementation((message?: unknown) => {
+    lines.push(String(message));
+  });
+  const program = new Command().exitOverride();
+  registerCommands(program);
+  await program.parseAsync(args, { from: 'user' });
+  expect(lines).toHaveLength(1);
+  return {
+    output: JSON.parse(lines[0]) as Record<string, unknown>,
+    exitCode: process.exitCode,
+  };
+}
+
+describe('Sheet machine output', () => {
+  it('returns JSON when authentication is missing', async () => {
+    const result = await runSheetCommand([
+      'sheet',
+      'get',
+      '研发:Budget.sheet.json',
+      '--range',
+      'Sheet1!A1',
+      '--json',
+    ]);
+    expect(result.output).toMatchObject({
+      outcome: 'FAILED',
+      phase: 'load',
+      unit_id: null,
+      identity_resolved: false,
+      failure_code: 'authentication_required',
+    });
+    expect(result.exitCode).toBe(1);
+  });
+
+  it('returns JSON for missing required Sheet arguments', async () => {
+    const result = await runSheetCommand(
+      ['sheet', 'set', '--range', 'Sheet1!A1', '--json'],
+      TOKEN
+    );
+    expect(result.output).toMatchObject({
+      outcome: 'FAILED',
+      phase: 'validate',
+      unit_id: null,
+      identity_resolved: false,
+      failure_code: 'sheet_target_invalid',
+    });
+    expect(result.exitCode).toBe(1);
+  });
+
+  it('returns bounded JSON when the session request is forbidden', async () => {
+    const sensitive = 'sessionTicket=never-log';
+    server.use(
+      http.get(`${BASE}/api/spaces/:sid/sheets/session`, () =>
+        HttpResponse.text(sensitive, { status: 403 })
+      )
+    );
+    const result = await runSheetCommand(
+      [
+        'sheet',
+        'get',
+        '研发:Budget.sheet.json',
+        '--range',
+        'Sheet1!A1',
+        '--json',
+      ],
+      TOKEN
+    );
+    expect(result.output).toMatchObject({
+      outcome: 'FAILED',
+      phase: 'load',
+      space_id: SID,
+      path: 'Budget.sheet.json',
+      unit_id: null,
+      identity_resolved: false,
+      failure_code: 'collaboration_permission_denied',
+    });
+    expect(JSON.stringify(result.output)).not.toContain(sensitive);
+    expect(result.exitCode).toBe(1);
+  });
+
+  it('preserves a target-resolution network failure as collaboration_unavailable', async () => {
+    server.use(http.get(`${BASE}/api/spaces`, () => HttpResponse.error()));
+    const result = await runSheetCommand(
+      [
+        'sheet',
+        'get',
+        '研发:Budget.sheet.json',
+        '--range',
+        'Sheet1!A1',
+        '--json',
+      ],
+      TOKEN
+    );
+    expect(result.output).toMatchObject({
+      outcome: 'FAILED',
+      phase: 'load',
+      identity_resolved: false,
+      failure_code: 'collaboration_unavailable',
+    });
+    expect(result.exitCode).toBe(1);
+  });
+
+  it('preserves target-resolution authorization failure as permission denied', async () => {
+    server.use(
+      http.get(`${BASE}/api/spaces`, () =>
+        HttpResponse.text('unauthorized', { status: 401 })
+      )
+    );
+    const result = await runSheetCommand(
+      [
+        'sheet',
+        'get',
+        '研发:Budget.sheet.json',
+        '--range',
+        'Sheet1!A1',
+        '--json',
+      ],
+      TOKEN
+    );
+    expect(result.output).toMatchObject({
+      outcome: 'FAILED',
+      phase: 'load',
+      identity_resolved: false,
+      failure_code: 'collaboration_permission_denied',
+    });
+    expect(result.exitCode).toBe(1);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // ls -R
@@ -400,6 +544,48 @@ describe('link metadata mapping', () => {
     });
   });
 
+  it('aligns every human-readable value to the same column', async () => {
+    server.use(
+      http.get(`${BASE}/api/file-refs/:fileId/diagnostic`, () =>
+        HttpResponse.json({
+          link_valid: true,
+          space_exists: true,
+          has_space_access: true,
+          document_applicable: true,
+          document_exists: true,
+          path: 'Budget.sheet.json',
+          is_dir: false,
+          owner_name: '管理员',
+          owner_email: 'owner@example.com',
+        })
+      )
+    );
+    vi.stubEnv('DOCSYNC_BASE_URL', BASE);
+    vi.stubEnv('DOCSYNC_API_TOKEN', TOKEN);
+    Reflect.set(globalThis, '__VERSION__', 'test');
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((message?: unknown) => {
+      lines.push(String(message));
+    });
+
+    const program = new Command().exitOverride();
+    registerCommands(program);
+    await program.parseAsync(
+      ['link', 'info', 'https://docz.example.com/s/yanfa/f/NNjrcj8c'],
+      { from: 'user' }
+    );
+
+    expect(lines).toEqual([
+      'Link type:        normal',
+      'Link status:      valid',
+      'Space permission: accessible',
+      'Document path:    /Budget.sheet.json',
+      'Document status:  exists',
+      'Space admin:      管理员 <owner@example.com>',
+      'Folder:           false',
+    ]);
+  });
+
   it('marks a space root as not applicable document and folder', () => {
     expect(
       mapNormalLinkInfo({
@@ -677,6 +863,23 @@ describe('resolveTarget', () => {
     ]);
     expect(result.spaceId).toBe('space-priv');
     expect(result.path).toBe('AI-Coding技巧总结-摘要.md');
+  });
+
+  it('rejects an old stable link after a cross-Space move', async () => {
+    server.use(
+      http.get(`${BASE}/api/file-refs/:fileId`, () =>
+        HttpResponse.json({
+          id: 'NNjrcj8c',
+          space_id: 'space-after-move',
+          path: 'moved/Budget.sheet.json',
+        })
+      )
+    );
+    await expect(
+      resolveTarget(client, [
+        'https://docz.zhenguanyu.com/s/yanhongkang/f/NNjrcj8c',
+      ])
+    ).rejects.toThrow('Stable link Space mismatch');
   });
 
   it('strips #fragment from fileId in short URL', async () => {
