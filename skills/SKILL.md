@@ -1,7 +1,7 @@
 ---
 name: docz
 description: Read, write, collaboratively edit, and safely search local synchronized copies of company DocSync documents. Triggers on "docs", "documents", "upload file", "read space", "docz", "DocSync", "save file", "rollback", "restore", "trash", "version history", "comment", "share link", "diff", "collab", "collaborative editing", "local sync", "sync root", "bulk document search", "Neovim"
-version: 0.16.0
+version: 0.17.0
 author: kris
 tags:
   - docsync
