@@ -1,5 +1,11 @@
 # docz-cli
 
+## 0.12.1
+
+### Patch Changes
+
+- aac8765: Load collaborative Sheet snapshots that contain Univer drawing mutations.
+
 ## 0.12.0
 
 ### Minor Changes
