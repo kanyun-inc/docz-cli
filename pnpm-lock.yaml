@@ -29,6 +29,9 @@ importers:
       '@univerjs/core':
         specifier: 0.21.1
         version: 0.21.1(rxjs@7.8.2)
+      '@univerjs/drawing':
+        specifier: 0.21.1
+        version: 0.21.1(rxjs@7.8.2)
       '@univerjs/engine-formula':
         specifier: 0.21.1
         version: 0.21.1(rxjs@7.8.2)
@@ -42,6 +45,9 @@ importers:
         specifier: 0.21.1
         version: 0.21.1(rxjs@7.8.2)
       '@univerjs/sheets':
+        specifier: 0.21.1
+        version: 0.21.1(rxjs@7.8.2)
+      '@univerjs/sheets-drawing':
         specifier: 0.21.1
         version: 0.21.1(rxjs@7.8.2)
       commander:
