@@ -19,6 +19,7 @@ import {
   Univer,
 } from '@univerjs/core';
 import { FUniver } from '@univerjs/core/facade';
+import { UniverDrawingPlugin } from '@univerjs/drawing';
 import { UniverFormulaEnginePlugin } from '@univerjs/engine-formula';
 import {
   type ISocket,
@@ -28,6 +29,7 @@ import {
 } from '@univerjs/network';
 import { SetRangeValuesCommand, UniverSheetsPlugin } from '@univerjs/sheets';
 import sheetsEnUS from '@univerjs/sheets/locale/en-US';
+import { UniverSheetsDrawingPlugin } from '@univerjs/sheets-drawing';
 import {
   RevisionService,
   UniverCollaborationPlugin,
@@ -55,6 +57,14 @@ export const SHEET_UNIVER_LOG_LEVEL = LogLevel.SILENT;
 // dependency remains pinned to this vendor version.
 export function forceUniverSilentLogging(univer: Univer): void {
   univer.__getInjector().get(ILogService).setLogLevel(SHEET_UNIVER_LOG_LEVEL);
+}
+
+export function registerSheetDrawingSupport(univer: Univer): void {
+  // Collaboration snapshots can contain drawing mutations even though this
+  // headless CLI only reads and writes cell values. Register the model-layer
+  // drawing plugins so Univer can faithfully replay those changesets.
+  univer.registerPlugin(UniverDrawingPlugin);
+  univer.registerPlugin(UniverSheetsDrawingPlugin);
 }
 
 export function validateUniverEndpoint(raw: string, doczBaseUrl: string): URL {
@@ -392,6 +402,7 @@ export async function openUniverSheet(
   univer.registerPlugin(UniverNetworkPlugin);
   univer.registerPlugin(UniverFormulaEnginePlugin);
   univer.registerPlugin(UniverSheetsPlugin);
+  registerSheetDrawingSupport(univer);
   const license = process.env.UNIVER_LICENSE?.trim();
   // The Node collaboration plugin expects the license plugin to be explicitly
   // registered before it, including in Univer's supported limited evaluation

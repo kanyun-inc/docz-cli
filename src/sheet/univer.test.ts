@@ -1,9 +1,18 @@
-import { LogLevel } from '@univerjs/core';
+import {
+  ICommandService,
+  LocaleType,
+  LogLevel,
+  Univer,
+  UniverInstanceType,
+} from '@univerjs/core';
+import { UniverSheetsPlugin } from '@univerjs/sheets';
+import { SetDrawingApplyMutation } from '@univerjs/sheets-drawing';
 import { CollaborationStatus } from '@univerjs-pro/collaboration-client';
 import { describe, expect, it, vi } from 'vitest';
 import {
   closePendingCollaborationSocket,
   forceUniverSilentLogging,
+  registerSheetDrawingSupport,
   runDeferredCleanup,
   SHEET_UNIVER_LOG_LEVEL,
   sheetSocketEventForVendor,
@@ -11,6 +20,34 @@ import {
   waitUntil,
   withUniverTimeout,
 } from './univer.js';
+
+describe('Univer snapshot mutation support', () => {
+  it('registers drawing mutations used by collaboration snapshot replay', () => {
+    const univer = new Univer({
+      locale: LocaleType.EN_US,
+      locales: { [LocaleType.EN_US]: {} },
+      logLevel: LogLevel.SILENT,
+    });
+    try {
+      univer.registerPlugin(UniverSheetsPlugin);
+      registerSheetDrawingSupport(univer);
+      univer.createUnit(UniverInstanceType.UNIVER_SHEET, {
+        id: 'drawing-snapshot-test',
+        name: 'drawing-snapshot-test',
+        sheetOrder: [],
+        sheets: {},
+      });
+      expect(
+        univer
+          .__getInjector()
+          .get(ICommandService)
+          .hasCommand(SetDrawingApplyMutation.id)
+      ).toBe(true);
+    } finally {
+      univer.dispose();
+    }
+  });
+});
 
 describe('Univer logging', () => {
   it('keeps vendor transport logs disabled to protect credentials', () => {
