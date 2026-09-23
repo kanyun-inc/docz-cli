@@ -15,12 +15,18 @@ import {
   type ShareLinkInspection,
 } from './client.js';
 import { startCollabBridge } from './collab/bridge.js';
+import { collabHTTPError } from './collab/errors.js';
 import { CollabRoomClient, withCollabRoom } from './collab/room.js';
+import { collabTimeout, resolveCollabSession } from './collab/session.js';
 import {
   CollabBaseHashRequiredError,
   CollabConflictError,
 } from './collab/text.js';
-import { type CollabOpenOptions, CollabUnknownError } from './collab/types.js';
+import {
+  CollabError,
+  type CollabOpenOptions,
+  CollabUnknownError,
+} from './collab/types.js';
 import { getBaseUrl, getConfigPath, getToken, saveConfig } from './config.js';
 import { registerLocalCommands } from './local.js';
 import {
@@ -146,20 +152,42 @@ async function buildCollabOpenOptions(
   target: string,
   opts: { client?: string; clientVersion?: string; timeout?: number } = {}
 ): Promise<CollabOpenOptions> {
-  const api = getClient();
-  const { spaceId, path } = await resolveTarget(api, [target]);
+  const timeoutMs = collabTimeout(opts.timeout);
+  const token = getRequiredToken();
+  const api = new DocSyncClient(
+    getBaseUrl(),
+    token,
+    AbortSignal.timeout(timeoutMs)
+  );
+  let resolved: { spaceId: string; path: string };
+  try {
+    resolved = await resolveTarget(api, [target]);
+  } catch (err) {
+    if (err instanceof DocSyncHTTPError) throw collabHTTPError(err.status);
+    throw new CollabError(
+      'target_unavailable',
+      'collab target could not be resolved; check target and service availability'
+    );
+  }
+  const { spaceId, path } = resolved;
   if (!path) {
     throw new Error('file path is required for collaborative editing');
   }
-  return {
+  let fileId: string | undefined;
+  if (/^https?:\/\//.test(target)) {
+    const link = parseNormalLink(target);
+    if (link.kind === 'file-ref' && !link.childPath) fileId = link.fileId;
+  }
+  return resolveCollabSession({
     baseUrl: getBaseUrl(),
-    token: getRequiredToken(),
+    token,
+    fileId,
     spaceId,
     path,
     client: opts.client ?? 'docz-cli',
     clientVersion: opts.clientVersion ?? __VERSION__,
-    timeoutMs: opts.timeout,
-  };
+    timeoutMs,
+  });
 }
 
 /** Parse "space:path" or "space path" format */
@@ -2475,6 +2503,7 @@ export function registerCommands(program: Command): void {
               force: opts.force,
             });
             if (opts.publish === false) {
+              await room.confirmChanges();
               console.log(
                 `Updated collaborative room (collab_hash: ${write.collabHash})`
               );
@@ -2493,19 +2522,22 @@ export function registerCommands(program: Command): void {
             console.error(
               `Error: collaborative document changed. Re-read and retry. current=${err.currentHash} base=${err.baseHash}`
             );
-            process.exit(1);
+            process.exitCode = 1;
+            return;
           }
           if (err instanceof CollabBaseHashRequiredError) {
             console.error(
               `Error: --base-collab-hash is required unless --force is set. Re-read first to get the latest hash. current=${err.currentHash}`
             );
-            process.exit(1);
+            process.exitCode = 1;
+            return;
           }
           if (err instanceof CollabUnknownError) {
             console.error(
               `Unknown state: ${err.message}. The server may have processed the publish; please re-read before retrying.`
             );
-            process.exit(75);
+            process.exitCode = 75;
+            return;
           }
           throw err;
         }
@@ -2536,7 +2568,8 @@ export function registerCommands(program: Command): void {
           console.error(
             `Unknown state: ${err.message}. The server may have processed the publish; please re-read before retrying.`
           );
-          process.exit(75);
+          process.exitCode = 75;
+          return;
         }
         throw err;
       }

@@ -1,6 +1,11 @@
 import readline from 'node:readline';
 import type { CollabRoomClient } from './room.js';
 import { collabHash } from './text.js';
+import {
+  CollabError,
+  CollabPublishError,
+  CollabUnknownError,
+} from './types.js';
 
 type BridgeRequest = {
   id?: number | string;
@@ -96,6 +101,15 @@ export async function startCollabBridge(
       send({
         id: req.id,
         error: err instanceof Error ? err.message : String(err),
+        ...(err instanceof CollabError ||
+        err instanceof CollabPublishError ||
+        err instanceof CollabUnknownError
+          ? {
+              code: err.code,
+              outcome:
+                err instanceof CollabUnknownError ? 'unknown' : 'failure',
+            }
+          : {}),
       });
     }
   }

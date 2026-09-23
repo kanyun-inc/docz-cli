@@ -49,6 +49,17 @@ describe('collab text helpers', () => {
 });
 
 describe('collab room name helpers', () => {
+  it('uses stable file identity independent of renames', () => {
+    expect(buildCollabDocumentName('space-1', 'old.md', 'file_1')).toBe(
+      'v2:space-1:file_1'
+    );
+    expect(buildCollabDocumentName('space-1', 'new.md', 'file_1')).toBe(
+      'v2:space-1:file_1'
+    );
+    expect(() =>
+      buildCollabDocumentName('space-1', 'new.md', 'bad:id')
+    ).toThrow('invalid collab file identity');
+  });
   it('normalizes paths like the web editor does', () => {
     expect(normalizeCollabFilePath('/docs//方案.md')).toBe('docs/方案.md');
     expect(normalizeCollabFilePath('docs%2F方案.md')).toBe('docs/方案.md');
