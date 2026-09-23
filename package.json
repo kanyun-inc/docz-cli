@@ -63,6 +63,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.2.0",
     "@changesets/cli": "^2.31.0",
+    "@hocuspocus/server": "2.15.3",
     "@types/node": "^22.15.0",
     "@types/ws": "^8.18.1",
     "msw": "^2.8.4",

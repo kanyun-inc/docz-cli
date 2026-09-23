@@ -21,9 +21,15 @@ export function normalizeCollabFilePath(path: string): string {
 
 export function buildCollabDocumentName(
   spaceId: string,
-  filePath: string
+  filePath: string,
+  fileId?: string
 ): string {
   const sid = spaceId.trim();
+  if (fileId !== undefined) {
+    if (!sid || sid.includes(':') || !/^[a-zA-Z0-9_-]+$/.test(fileId))
+      throw new Error('invalid collab file identity');
+    return `v2:${sid}:${fileId}`;
+  }
   const normalizedPath = normalizeCollabFilePath(filePath);
   if (!sid || !normalizedPath)
     throw new Error('space id and file path are required');

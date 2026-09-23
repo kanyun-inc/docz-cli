@@ -212,6 +212,31 @@ docz-cli image upload ./screenshot.png
 # Markdown: ![screenshot](https://...)
 ```
 
+### Realtime text collaboration
+
+```bash
+docz collab cat <target> > current.md 2> current.meta
+docz collab write <target> - --base-collab-hash <hash> < edited.md
+docz collab publish <target>
+```
+
+Use the `collab_hash` from the live read, merge your changes into that content,
+then write. Commands negotiate the collaboration session and follow stable file
+identities when enabled; legacy text rooms remain supported. Sheet descriptors
+use `sheet get/set`, not text collaboration. `--no-publish` waits for realtime
+update acknowledgement but does not explicitly flush to Git (server autosave
+can still occur).
+
+Exit 1 means the command failed; exit 75 means the edit/publish result is unknown.
+On 75, preserve your draft and reread before deciding whether another write is
+needed. Do not blindly replay it. A failed publish does not roll back an edit
+already sent to the realtime room. Connection failures before editing are
+reported separately. A server's generic `permission-denied` is reported as an
+ambiguous authentication rejection because older servers mask other failures.
+
+See [protocol and validation notes](docs/collab-identity.md) for compatibility,
+error categories, and the minimal server-side error propagation follow-up.
+
 ### Univer Sheets
 
 Sheet commands read and write the current Univer collaboration state; they do

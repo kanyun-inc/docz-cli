@@ -293,13 +293,15 @@ function isMoveErrorDetail(value: unknown): value is MoveErrorDetail {
 export class DocSyncClient {
   constructor(
     private baseUrl: string,
-    private token: string
+    private token: string,
+    private signal?: AbortSignal
   ) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
     const res = await fetch(`${this.baseUrl}${path}`, {
+      signal: this.signal,
       ...init,
       headers: {
         Authorization: `Bearer ${this.token}`,

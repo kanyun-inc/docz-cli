@@ -1,4 +1,9 @@
 import { Command, CommanderError } from 'commander';
+import {
+  CollabError,
+  CollabPublishError,
+  CollabUnknownError,
+} from './collab/types.js';
 import { registerCommands } from './commands.js';
 import {
   hasMissingSheetOptionValue,
@@ -55,6 +60,17 @@ export async function runCLI(argv: string[], version: string): Promise<void> {
   try {
     await program.parseAsync(argv, { from: 'user' });
   } catch (error) {
+    if (
+      error instanceof CollabError ||
+      error instanceof CollabPublishError ||
+      error instanceof CollabUnknownError
+    ) {
+      console.error(
+        `${error instanceof CollabUnknownError ? 'Unknown state' : 'Error'} [${error.code}]: ${error.message}${error instanceof CollabUnknownError ? '. Re-read before retrying; the server may already have applied the operation.' : ''}`
+      );
+      process.exitCode = error instanceof CollabUnknownError ? 75 : 1;
+      return;
+    }
     if (!(error instanceof CommanderError)) throw error;
     if (
       error.code === 'commander.helpDisplayed' ||

@@ -4,6 +4,9 @@ export interface CollabTarget {
 }
 
 export interface CollabOpenOptions extends CollabTarget {
+  fileId?: string;
+  identityVersion?: number;
+  readOnly?: boolean;
   baseUrl: string;
   token: string;
   client: string;
@@ -30,9 +33,22 @@ export interface CollabPublishResult extends CollabTarget {
 }
 
 export class CollabUnknownError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    public readonly code = 'result_unknown'
+  ) {
     super(message);
     this.name = 'CollabUnknownError';
+  }
+}
+
+export class CollabError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string
+  ) {
+    super(message);
+    this.name = 'CollabError';
   }
 }
 
